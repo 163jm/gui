@@ -1,0 +1,120 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Tidy Go modules
+        run: go mod tidy
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: Download latest sing-box
+        shell: pwsh
+        run: |
+          $apiUrl = "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+          $headers = @{ "User-Agent" = "singbox-gui-builder" }
+          $release = Invoke-RestMethod -Uri $apiUrl -Headers $headers
+          $tag = $release.tag_name
+          Write-Host "Latest sing-box version: $tag"
+
+          $assetName = "sing-box-$($tag.TrimStart('v'))-windows-amd64.zip"
+          $asset = $release.assets | Where-Object { $_.name -eq $assetName }
+          if (-not $asset) {
+            Write-Error "Asset $assetName not found"
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path "bin"
+          $zipPath = "sing-box.zip"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath "sing-box-extracted" -Force
+          $singboxExe = Get-ChildItem -Path "sing-box-extracted" -Recurse -Filter "sing-box.exe" | Select-Object -First 1
+          Copy-Item $singboxExe.FullName -Destination "bin\sing-box.exe"
+          Write-Host "sing-box.exe downloaded to bin\"
+
+      - name: Build Wails app
+        run: wails build -platform windows/amd64 -ldflags "-H windowsgui" -o singbox-gui.exe
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "release\singbox-gui"
+          Copy-Item "build\bin\singbox-gui.exe" "release\singbox-gui\"
+          Copy-Item -Recurse "bin" "release\singbox-gui\bin"
+          New-Item -ItemType Directory -Force -Path "release\singbox-gui\data"
+          Copy-Item "README.md" "release\singbox-gui\" -ErrorAction SilentlyContinue
+
+          # Create example config
+          $exampleConfig = @'
+          {
+            "log": { "level": "info" },
+            "dns": {
+              "servers": [
+                { "tag": "google", "address": "8.8.8.8" }
+              ]
+            },
+            "inbounds": [],
+            "outbounds": [
+              {
+                "type": "vless",
+                "tag": "proxy",
+                "server": "your-server.com",
+                "server_port": 443,
+                "uuid": "your-uuid-here",
+                "tls": { "enabled": true }
+              },
+              { "type": "direct", "tag": "direct" },
+              { "type": "block",  "tag": "block"  }
+            ],
+            "route": {
+              "rules": [
+                { "geosite": ["cn"], "outbound": "direct" }
+              ],
+              "final": "proxy"
+            }
+          }
+          '@
+          $exampleConfig | Out-File -FilePath "release\singbox-gui\config.example.json" -Encoding UTF8
+
+          Compress-Archive -Path "release\singbox-gui" -DestinationPath "singbox-gui-windows-amd64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: singbox-gui-windows-amd64
+          path: singbox-gui-windows-amd64.zip
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: singbox-gui-windows-amd64.zip
+          generate_release_notes: true
