@@ -8,7 +8,6 @@ import (
 	"singbox-gui/backend/node"
 )
 
-// loadJSON reads and parses a sing-box config file
 func loadJSON(path string) (map[string]interface{}, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -21,7 +20,6 @@ func loadJSON(path string) (map[string]interface{}, error) {
 	return cfg, nil
 }
 
-// saveJSON writes a config map back to file (pretty-printed)
 func saveJSON(path string, cfg map[string]interface{}) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -42,18 +40,15 @@ func getOutbounds(cfg map[string]interface{}) []interface{} {
 
 // ─── Apply Node ───────────────────────────────────────────────────────────────
 
-// ApplyNodeToConfig replaces or creates the "proxy" tagged outbound in a sing-box config file.
 func ApplyNodeToConfig(cfgPath string, n node.Node) error {
 	cfg, err := loadJSON(cfgPath)
 	if err != nil {
 		return err
 	}
-
 	outbound, err := nodeToSingBoxOutbound(n)
 	if err != nil {
 		return err
 	}
-
 	outbounds := getOutbounds(cfg)
 	replaced := false
 	for i, ob := range outbounds {
@@ -71,12 +66,11 @@ func ApplyNodeToConfig(cfgPath string, n node.Node) error {
 		outbounds = append(outbounds, outbound)
 	}
 	cfg["outbounds"] = outbounds
-
 	return saveJSON(cfgPath, cfg)
 }
 
-// nodeToSingBoxOutbound converts a Node to a sing-box outbound object.
-// Field names and required fields are taken directly from the official sing-box documentation.
+// nodeToSingBoxOutbound converts a Node to a sing-box outbound map.
+// All field names match the official sing-box documentation exactly.
 func nodeToSingBoxOutbound(n node.Node) (map[string]interface{}, error) {
 	ob := map[string]interface{}{
 		"tag":         "proxy",
@@ -86,8 +80,7 @@ func nodeToSingBoxOutbound(n node.Node) (map[string]interface{}, error) {
 
 	switch n.Protocol {
 
-	// ── VMess ──────────────────────────────────────────────────────────────────
-	// Required: server, server_port, uuid
+	// ── VMess ─────────────────────────────────────────────────────────────────
 	// Docs: https://sing-box.sagernet.org/configuration/outbound/vmess/
 	case "vmess":
 		if n.VMess == nil {
@@ -95,20 +88,17 @@ func nodeToSingBoxOutbound(n node.Node) (map[string]interface{}, error) {
 		}
 		ob["type"] = "vmess"
 		ob["uuid"] = n.VMess.UUID
-		// alter_id: 0 = AEAD (recommended), 1 = legacy VMess
 		ob["alter_id"] = n.VMess.AlterID
-		// security: auto | none | zero | aes-128-gcm | chacha20-poly1305 | aes-128-ctr(legacy)
-		// Must not be empty; default to "auto"
+		// security must NOT be empty string — default to "auto"
 		ob["security"] = orDefault(n.VMess.Security, "auto")
-		// transport (ws / grpc / http / httpupgrade / quic)
-		addTransport(ob, n.VMess.Network, n.VMess.Path, n.VMess.Host)
-		// TLS is optional for VMess
+		if t := buildTransport(n.VMess.Transport); t != nil {
+			ob["transport"] = t
+		}
 		if n.VMess.TLS {
-			addTLS(ob, n.VMess.SNI, n.VMess.ALPN, false, "")
+			ob["tls"] = buildTLS(n.VMess.SNI, n.VMess.ALPN, false, "")
 		}
 
-	// ── VLESS ──────────────────────────────────────────────────────────────────
-	// Required: server, server_port, uuid
+	// ── VLESS ─────────────────────────────────────────────────────────────────
 	// Docs: https://sing-box.sagernet.org/configuration/outbound/vless/
 	case "vless":
 		if n.VLESS == nil {
@@ -116,23 +106,21 @@ func nodeToSingBoxOutbound(n node.Node) (map[string]interface{}, error) {
 		}
 		ob["type"] = "vless"
 		ob["uuid"] = n.VLESS.UUID
-		// flow: only "xtls-rprx-vision" is supported; omit if empty
 		if n.VLESS.Flow != "" {
 			ob["flow"] = n.VLESS.Flow
 		}
-		addTransport(ob, n.VLESS.Network, n.VLESS.Path, n.VLESS.Host)
+		if t := buildTransport(n.VLESS.Transport); t != nil {
+			ob["transport"] = t
+		}
 		if n.VLESS.TLS {
 			if n.VLESS.PublicKey != "" {
-				// Reality TLS
-				addReality(ob, n.VLESS.SNI, n.VLESS.PublicKey, n.VLESS.ShortID, n.VLESS.Fingerprint)
+				ob["tls"] = buildRealityTLS(n.VLESS.SNI, n.VLESS.PublicKey, n.VLESS.ShortID, n.VLESS.Fingerprint)
 			} else {
-				addTLS(ob, n.VLESS.SNI, n.VLESS.ALPN, false, n.VLESS.Fingerprint)
+				ob["tls"] = buildTLS(n.VLESS.SNI, n.VLESS.ALPN, false, n.VLESS.Fingerprint)
 			}
 		}
 
-	// ── Trojan ─────────────────────────────────────────────────────────────────
-	// Required: server, server_port, password
-	// TLS is not listed as Required in the schema but is practically always needed.
+	// ── Trojan ────────────────────────────────────────────────────────────────
 	// Docs: https://sing-box.sagernet.org/configuration/outbound/trojan/
 	case "trojan":
 		if n.Trojan == nil {
@@ -140,12 +128,13 @@ func nodeToSingBoxOutbound(n node.Node) (map[string]interface{}, error) {
 		}
 		ob["type"] = "trojan"
 		ob["password"] = n.Trojan.Password
-		addTransport(ob, n.Trojan.Network, n.Trojan.Path, n.Trojan.Host)
-		// Trojan almost always uses TLS; always emit the tls block
-		addTLS(ob, n.Trojan.SNI, n.Trojan.ALPN, false, "")
+		if t := buildTransport(n.Trojan.Transport); t != nil {
+			ob["transport"] = t
+		}
+		// Trojan always uses TLS
+		ob["tls"] = buildTLS(n.Trojan.SNI, n.Trojan.ALPN, false, "")
 
-	// ── Shadowsocks ────────────────────────────────────────────────────────────
-	// Required: server, server_port, method, password
+	// ── Shadowsocks ───────────────────────────────────────────────────────────
 	// Docs: https://sing-box.sagernet.org/configuration/outbound/shadowsocks/
 	case "ss":
 		if n.SS == nil {
@@ -154,7 +143,6 @@ func nodeToSingBoxOutbound(n node.Node) (map[string]interface{}, error) {
 		ob["type"] = "shadowsocks"
 		ob["method"] = n.SS.Method
 		ob["password"] = n.SS.Password
-		// SIP003 plugin support (obfs-local, v2ray-plugin)
 		if n.SS.Plugin != "" {
 			ob["plugin"] = n.SS.Plugin
 			if n.SS.PluginOpts != "" {
@@ -162,144 +150,163 @@ func nodeToSingBoxOutbound(n node.Node) (map[string]interface{}, error) {
 			}
 		}
 
-	// ── Hysteria2 ──────────────────────────────────────────────────────────────
-	// Required: server, server_port, tls (tls is ==Required== per docs)
+	// ── Hysteria2 ─────────────────────────────────────────────────────────────
 	// Docs: https://sing-box.sagernet.org/configuration/outbound/hysteria2/
+	// tls is ==Required==
 	case "hysteria2":
 		if n.Hysteria2 == nil {
 			return nil, fmt.Errorf("Hysteria2 配置为空")
 		}
 		ob["type"] = "hysteria2"
-		// password is optional (for anonymous servers) but almost always present
 		if n.Hysteria2.Password != "" {
 			ob["password"] = n.Hysteria2.Password
 		}
-		// bandwidth limits in Mbps; omit if 0 (sing-box will use BBR CC instead)
 		if n.Hysteria2.UpMbps > 0 {
 			ob["up_mbps"] = n.Hysteria2.UpMbps
 		}
 		if n.Hysteria2.DownMbps > 0 {
 			ob["down_mbps"] = n.Hysteria2.DownMbps
 		}
-		// obfs: only "salamander" type is currently supported
 		if n.Hysteria2.Obfs != "" {
 			ob["obfs"] = map[string]interface{}{
-				"type":     n.Hysteria2.Obfs, // "salamander"
+				"type":     n.Hysteria2.Obfs,
 				"password": n.Hysteria2.ObfsPassword,
 			}
 		}
-		// tls is ==Required== for hysteria2
-		tlsCfg := map[string]interface{}{"enabled": true}
+		// tls Required — always include with enabled:true
+		tls := map[string]interface{}{"enabled": true}
 		if n.Hysteria2.SNI != "" {
-			tlsCfg["server_name"] = n.Hysteria2.SNI
+			tls["server_name"] = n.Hysteria2.SNI
 		}
 		if n.Hysteria2.Insecure {
-			tlsCfg["insecure"] = true
+			tls["insecure"] = true
 		}
 		if len(n.Hysteria2.ALPN) > 0 {
-			tlsCfg["alpn"] = n.Hysteria2.ALPN
+			tls["alpn"] = n.Hysteria2.ALPN
 		}
-		ob["tls"] = tlsCfg
+		ob["tls"] = tls
 
-	// ── TUIC ───────────────────────────────────────────────────────────────────
-	// Required: server, server_port, uuid, tls (tls is ==Required== per docs)
+	// ── TUIC ──────────────────────────────────────────────────────────────────
 	// Docs: https://sing-box.sagernet.org/configuration/outbound/tuic/
+	// tls is ==Required==
 	case "tuic":
 		if n.TUIC == nil {
 			return nil, fmt.Errorf("TUIC 配置为空")
 		}
 		ob["type"] = "tuic"
 		ob["uuid"] = n.TUIC.UUID
-		// password is optional per docs but almost always needed
 		if n.TUIC.Password != "" {
 			ob["password"] = n.TUIC.Password
 		}
-		// congestion_control: cubic (default) | new_reno | bbr
-		// Official default is "cubic", not "bbr"
+		// congestion_control: cubic(default) | new_reno | bbr
 		ob["congestion_control"] = orDefault(n.TUIC.CongestionControl, "cubic")
-		// udp_relay_mode: native (default) | quic
+		// udp_relay_mode: native(default) | quic — omit to use default
 		if n.TUIC.UDPRelayMode != "" {
 			ob["udp_relay_mode"] = n.TUIC.UDPRelayMode
 		}
-		// tls is ==Required== for TUIC
-		tlsCfg := map[string]interface{}{"enabled": true}
+		// tls Required — always include with enabled:true
+		tls := map[string]interface{}{"enabled": true}
 		if n.TUIC.SNI != "" {
-			tlsCfg["server_name"] = n.TUIC.SNI
+			tls["server_name"] = n.TUIC.SNI
 		}
 		if n.TUIC.Insecure {
-			tlsCfg["insecure"] = true
+			tls["insecure"] = true
 		}
 		if len(n.TUIC.ALPN) > 0 {
-			tlsCfg["alpn"] = n.TUIC.ALPN
+			tls["alpn"] = n.TUIC.ALPN
 		}
-		ob["tls"] = tlsCfg
+		ob["tls"] = tls
 
 	default:
 		return nil, fmt.Errorf("不支持的协议: %s", n.Protocol)
 	}
-
 	return ob, nil
 }
 
-// ─── Transport helpers ────────────────────────────────────────────────────────
-// Covers: ws, grpc, http, httpupgrade
-// Docs: https://sing-box.sagernet.org/configuration/shared/v2ray-transport/
+// ─── Transport builder ────────────────────────────────────────────────────────
+// Converts our TransportConfig into the sing-box "transport" object.
+//
+// sing-box transport field reference:
+//
+//   ws:
+//     type, path, headers{}, max_early_data, early_data_header_name
+//     NOTE: Host goes inside headers["Host"], NOT a top-level "host" field.
+//
+//   http (h2/h3):
+//     type, host[], path, method, headers{}, idle_timeout, ping_timeout
+//     NOTE: host is a []string array. path is a plain string.
+//     With tls.alpn=["h3"] the transport uses HTTP/3 instead of HTTP/2.
+//
+//   grpc:
+//     type, service_name, idle_timeout, ping_timeout, permit_without_stream
+//
+//   httpupgrade:
+//     type, host, path, headers{}
+//     NOTE: host is a TOP-LEVEL string field, NOT inside headers.
+//     (See sing-box issue #1841 — putting host in headers["Host"] does NOT work)
+//
+//   quic:
+//     type  (no other user-facing fields)
 
-func addTransport(ob map[string]interface{}, network, path, host string) {
-	if network == "" || network == "tcp" || network == "raw" {
-		return
+func buildTransport(t *node.TransportConfig) map[string]interface{} {
+	if t == nil || t.Type == "" {
+		return nil
 	}
-	transport := map[string]interface{}{
-		"type": network,
-	}
-	switch network {
+	m := map[string]interface{}{"type": t.Type}
+
+	switch t.Type {
 	case "ws":
-		// WebSocket transport
-		// path: URL path, host: Host header override
-		if path != "" {
-			transport["path"] = path
+		if t.Path != "" {
+			m["path"] = t.Path
 		}
-		if host != "" {
-			transport["headers"] = map[string]interface{}{
-				"Host": host,
-			}
+		// Host goes into headers["Host"] for WebSocket
+		if t.Host != "" {
+			m["headers"] = map[string]interface{}{"Host": t.Host}
 		}
-	case "grpc":
-		// gRPC transport
-		// service_name maps to the gRPC path (without leading slash)
-		if path != "" {
-			transport["service_name"] = path
+		// Early data support
+		if t.MaxEarlyData > 0 {
+			m["max_early_data"] = t.MaxEarlyData
+			m["early_data_header_name"] = orDefault(t.EarlyDataHeaderName, "Sec-WebSocket-Protocol")
 		}
+
 	case "http":
-		// HTTP/1.1 transport
-		// host is a list, path is a list in sing-box
-		if host != "" {
-			transport["host"] = []string{host}
+		// path: plain string (NOT an array)
+		if t.Path != "" {
+			m["path"] = t.Path
 		}
-		if path != "" {
-			transport["path"] = path
+		// host: []string array
+		if t.Host != "" {
+			m["host"] = []string{t.Host}
 		}
+
+	case "grpc":
+		if t.ServiceName != "" {
+			m["service_name"] = t.ServiceName
+		}
+
 	case "httpupgrade":
-		// HTTPUpgrade transport (common with Xray/v2ray configs)
-		if path != "" {
-			transport["path"] = path
+		if t.Path != "" {
+			m["path"] = t.Path
 		}
-		if host != "" {
-			transport["host"] = host
+		// host: TOP-LEVEL string field (NOT headers["Host"] — that is the WebSocket behavior)
+		if t.Host != "" {
+			m["host"] = t.Host
 		}
+
 	case "quic":
-		// QUIC transport: no extra fields needed for basic usage
+		// no user-facing fields
+
 	}
-	ob["transport"] = transport
+	return m
 }
 
-// ─── TLS helpers ─────────────────────────────────────────────────────────────
-// Outbound TLS fields:
-//   enabled, server_name, insecure, alpn, utls.{enabled,fingerprint},
-//   reality.{enabled,public_key,short_id}
-// Docs: https://sing-box.sagernet.org/configuration/shared/tls/
+// ─── TLS builders ─────────────────────────────────────────────────────────────
+// sing-box outbound TLS fields:
+//   enabled(req), server_name, insecure, alpn[],
+//   utls.{enabled, fingerprint},
+//   reality.{enabled, public_key(req), short_id(req)}
 
-func addTLS(ob map[string]interface{}, sni string, alpn []string, insecure bool, fingerprint string) {
+func buildTLS(sni string, alpn []string, insecure bool, fingerprint string) map[string]interface{} {
 	tls := map[string]interface{}{"enabled": true}
 	if sni != "" {
 		tls["server_name"] = sni
@@ -310,35 +317,35 @@ func addTLS(ob map[string]interface{}, sni string, alpn []string, insecure bool,
 	if len(alpn) > 0 {
 		tls["alpn"] = alpn
 	}
-	// uTLS fingerprint (optional, for browser impersonation)
+	// uTLS fingerprint for browser impersonation
 	if fingerprint != "" {
 		tls["utls"] = map[string]interface{}{
 			"enabled":     true,
 			"fingerprint": fingerprint,
 		}
 	}
-	ob["tls"] = tls
+	return tls
 }
 
-// addReality builds a Reality TLS block.
-// Reality fields: enabled, public_key (required), short_id (required)
-func addReality(ob map[string]interface{}, sni, publicKey, shortID, fingerprint string) {
+// buildRealityTLS builds the TLS block for VLESS+Reality.
+// Reality requires: public_key, short_id, and a uTLS fingerprint (default "chrome").
+func buildRealityTLS(sni, publicKey, shortID, fingerprint string) map[string]interface{} {
 	tls := map[string]interface{}{
-		"enabled":     true,
-		"server_name": sni, // SNI sent to destination (the camouflage domain)
+		"enabled": true,
 		"reality": map[string]interface{}{
 			"enabled":    true,
 			"public_key": publicKey,
 			"short_id":   shortID,
 		},
+		"utls": map[string]interface{}{
+			"enabled":     true,
+			"fingerprint": orDefault(fingerprint, "chrome"),
+		},
 	}
-	// uTLS fingerprint is recommended when using Reality
-	fp := orDefault(fingerprint, "chrome")
-	tls["utls"] = map[string]interface{}{
-		"enabled":     true,
-		"fingerprint": fp,
+	if sni != "" {
+		tls["server_name"] = sni
 	}
-	ob["tls"] = tls
+	return tls
 }
 
 // ─── TUN inbound ─────────────────────────────────────────────────────────────
@@ -359,29 +366,22 @@ func SetTun(cfgPath string, enable bool) error {
 	if err != nil {
 		return err
 	}
-
 	inbounds := getInbounds(cfg)
-
-	// Remove any existing tun inbound
 	newInbounds := []interface{}{}
 	for _, ib := range inbounds {
-		if m, ok := ib.(map[string]interface{}); ok {
-			if m["type"] == "tun" {
-				continue
-			}
+		if m, ok := ib.(map[string]interface{}); ok && m["type"] == "tun" {
+			continue
 		}
 		newInbounds = append(newInbounds, ib)
 	}
-
 	if enable {
 		newInbounds = append(newInbounds, tunInbound)
 	}
-
 	cfg["inbounds"] = newInbounds
 	return saveJSON(cfgPath, cfg)
 }
 
-// ─── Mixed (system proxy) inbound ────────────────────────────────────────────
+// ─── Mixed inbound ────────────────────────────────────────────────────────────
 
 const MixedPort = 2080
 
@@ -390,30 +390,22 @@ func SetMixedInbound(cfgPath string, enable bool) error {
 	if err != nil {
 		return err
 	}
-
 	inbounds := getInbounds(cfg)
-
-	// Remove any existing mixed inbound
 	newInbounds := []interface{}{}
 	for _, ib := range inbounds {
-		if m, ok := ib.(map[string]interface{}); ok {
-			if m["type"] == "mixed" {
-				continue
-			}
+		if m, ok := ib.(map[string]interface{}); ok && m["type"] == "mixed" {
+			continue
 		}
 		newInbounds = append(newInbounds, ib)
 	}
-
 	if enable {
-		mixed := map[string]interface{}{
+		newInbounds = append(newInbounds, map[string]interface{}{
 			"type":        "mixed",
 			"tag":         "mixed-in",
 			"listen":      "127.0.0.1",
 			"listen_port": MixedPort,
-		}
-		newInbounds = append(newInbounds, mixed)
+		})
 	}
-
 	cfg["inbounds"] = newInbounds
 	return saveJSON(cfgPath, cfg)
 }
