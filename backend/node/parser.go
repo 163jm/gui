@@ -222,6 +222,8 @@ func parseTrojan(uri string) (*Node, error) {
 		Network:  orDefault(q.Get("type"), "tcp"),
 		SNI:      q.Get("sni"),
 		ALPN:     parseALPN(q.Get("alpn")),
+		Path:     q.Get("path"),
+		Host:     q.Get("host"),
 	}
 	n := &Node{
 		ID:       newID(),
@@ -358,7 +360,8 @@ func parseTUIC(uri string) (*Node, error) {
 		SNI:               q.Get("sni"),
 		ALPN:              parseALPN(q.Get("alpn")),
 		Insecure:          insecure,
-		CongestionControl: orDefault(q.Get("congestion_control"), "bbr"),
+		CongestionControl: orDefault(q.Get("congestion_control"), "cubic"),
+		UDPRelayMode:      q.Get("udp_relay_mode"),
 	}
 	n := &Node{
 		ID:       newID(),

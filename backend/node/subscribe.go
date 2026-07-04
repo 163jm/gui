@@ -213,9 +213,10 @@ func clashProxyToNode(p map[string]interface{}) (*Node, error) {
 		sni, _ := p["sni"].(string)
 		n.Protocol = "tuic"
 		n.TUIC = &TUICConfig{
-			UUID:     uuid,
-			Password: password,
-			SNI:      sni,
+			UUID:              uuid,
+			Password:          password,
+			SNI:               sni,
+			CongestionControl: "cubic", // sing-box default
 		}
 	default:
 		return nil, fmt.Errorf("unsupported clash proxy type: %s", t)

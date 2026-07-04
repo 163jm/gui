@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -119,7 +120,14 @@ func (p *Process) GetLog() []string {
 	return result
 }
 
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func stripANSI(s string) string {
+	return ansiEscape.ReplaceAllString(s, "")
+}
+
 func (p *Process) appendLog(line string) {
+	line = stripANSI(line)
 	p.log = append(p.log, line)
 	if len(p.log) > p.maxLog {
 		p.log = p.log[len(p.log)-p.maxLog:]
