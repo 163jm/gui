@@ -74,17 +74,18 @@ export default function App() {
   }, [])
 
   // 下拉选择 configs 目录中的配置文件
-  const handleSelectConfig = useCallback(async (name) => {
-    if (!name) return
-    try {
-      const full = await api.SelectConfigFile(name)
-      showToast('已选择配置: ' + name, 'success')
-      await loadSettings()
-      return full
-    } catch (e) {
-      showToast('选择配置失败: ' + (e?.message || e), 'error')
+const handleSelectConfig = useCallback(async (name) => {
+if (!name) return
+try {
+const full = await api.SelectConfigFile(name)
+showToast('已切换配置: ' + name, 'success')
+await loadSettings()
+await loadApplied()
+return full
+} catch (e) {
+showToast('切换配置失败: ' + (e?.message || e), 'error')
     }
-  }, [loadSettings, showToast])
+  }, [loadSettings, loadApplied, showToast])
 
   const handleOpenConfigsDir = useCallback(async () => {
     try { await api.OpenConfigsDir() } catch (e) { /* ignore */ }

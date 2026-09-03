@@ -139,9 +139,58 @@ func (a *App) SelectConfigFile(name string) (string, error) {
 		if st, err := os.Stat(full); err != nil || st.IsDir() {
 			return "", fmt.Errorf("配置文件不存在: %s", name)
 		}
-		a.cfgManager.Settings.ConfigPath = full
+
+		// ── 切换编排：停核心 → 换配置 → 重建节点/inbound/tun → 拉起核心 ──
+		s := a.cfgManager.Settings
+		oldPath := s.ConfigPath
+		wasRunning := a.sbProcess.GetStatus().Running
+
+		// 切换前探测旧状态（tun 看旧配置文件；系统代理看注册表）
+		tunWasOn := oldPath != "" && config.HasTunInbound(oldPath)
+		proxyWasOn := a.proxy.IsEnabled()
+
+		if wasRunning {
+			if err := a.sbProcess.Stop(); err != nil {
+				return "", fmt.Errorf("停止核心失败: %v", err)
+			}
+		}
+
+		s.ConfigPath = full
 		if err := a.cfgManager.Save(); err != nil {
 			return "", fmt.Errorf("保存设置失败: %v", err)
+		}
+
+		// 重新应用节点（如果之前有应用过的节点）
+		if s.AppliedNodeID != "" {
+			if n := a.nodeStore.Get(s.AppliedNodeID); n != nil {
+				if err := config.ApplyNodeToConfig(full, *n); err != nil {
+					return "", fmt.Errorf("重新应用节点失败: %v", err)
+				}
+			}
+		}
+
+		// 系统代理开着则重建 mixed inbound 并重设注册表（端口可能已变）
+		if proxyWasOn {
+			if err := config.SetMixedInbound(full, true, s.ProxyListen, s.ProxyPort); err != nil {
+				return "", fmt.Errorf("重建系统代理 inbound 失败: %v", err)
+			}
+			if err := a.proxy.Enable("127.0.0.1", s.ProxyPort); err != nil {
+				return "", fmt.Errorf("重设系统代理失败: %v", err)
+			}
+		}
+
+		// TUN 开着则重建 tun inbound
+		if tunWasOn {
+			if err := config.SetTun(full, true, s.TunStack, s.TunMTU, s.TunStrictRoute); err != nil {
+				return "", fmt.Errorf("重建 TUN 配置失败: %v", err)
+			}
+		}
+
+		// 切换前核心在跑则重新拉起
+		if wasRunning {
+			if err := a.sbProcess.Start(getSingBoxBin(), full); err != nil {
+				return "", fmt.Errorf("配置已切换，但核心启动失败: %v（请手动启动核心）", err)
+			}
 		}
 		return full, nil
 	})
@@ -308,6 +357,11 @@ func (a *App) ApplyNode(id string) error {
 		}
 		if err := config.ApplyNodeToConfig(cfgPath, *n); err != nil {
 			return err
+		}
+		// 持久化应用的节点 ID（切换配置文件后据此重新应用）
+		a.cfgManager.Settings.AppliedNodeID = n.ID
+		if err := a.cfgManager.Save(); err != nil {
+			return fmt.Errorf("记录应用节点失败: %v", err)
 		}
 		if wasRunning {
 			if err := a.sbProcess.Start(getSingBoxBin(), cfgPath); err != nil {
@@ -482,7 +536,22 @@ func (a *App) EnableTun() error {
 			return fmt.Errorf("未选择配置文件")
 		}
 		s := a.cfgManager.Settings
-		return config.SetTun(cfgPath, true, s.TunStack, s.TunMTU, s.TunStrictRoute)
+		// TUN 开关依赖核心状态：核心在跑则先停、改配置、再拉起，保证即时生效
+		wasRunning := a.sbProcess.GetStatus().Running
+		if wasRunning {
+			if err := a.sbProcess.Stop(); err != nil {
+				return fmt.Errorf("停止核心失败: %v", err)
+			}
+		}
+		if err := config.SetTun(cfgPath, true, s.TunStack, s.TunMTU, s.TunStrictRoute); err != nil {
+			return err
+		}
+		if wasRunning {
+			if err := a.sbProcess.Start(getSingBoxBin(), cfgPath); err != nil {
+				return fmt.Errorf("TUN 已写入配置，但核心启动失败: %v（请手动启动核心）", err)
+			}
+		}
+		return nil
 	})
 }
 
@@ -492,7 +561,21 @@ func (a *App) DisableTun() error {
 		if cfgPath == "" {
 			return fmt.Errorf("未选择配置文件")
 		}
-		return config.SetTun(cfgPath, false, "", 0, false)
+		wasRunning := a.sbProcess.GetStatus().Running
+		if wasRunning {
+			if err := a.sbProcess.Stop(); err != nil {
+				return fmt.Errorf("停止核心失败: %v", err)
+			}
+		}
+		if err := config.SetTun(cfgPath, false, "", 0, false); err != nil {
+			return err
+		}
+		if wasRunning {
+			if err := a.sbProcess.Start(getSingBoxBin(), cfgPath); err != nil {
+				return fmt.Errorf("TUN 已移除，但核心启动失败: %v（请手动启动核心）", err)
+			}
+		}
+		return nil
 	})
 }
 

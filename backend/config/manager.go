@@ -14,6 +14,9 @@ type Settings struct {
 	ConfigPath    string   `json:"config_path"`
 	Subscriptions []string `json:"subscriptions"`
 
+	// 当前应用的节点 ID（切配置文件后据此重新应用）
+	AppliedNodeID string `json:"applied_node_id,omitempty"`
+
 	// 系统代理
 	ProxyListen      string `json:"proxy_listen"`       // mixed inbound 监听地址
 	ProxyPort        int    `json:"proxy_port"`         // mixed inbound 监听端口

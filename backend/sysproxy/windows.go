@@ -68,6 +68,17 @@ func (m *Manager) Enable(host string, port int) error {
 	return nil
 }
 
+// IsEnabled 读取注册表判断系统代理当前是否开启。
+func (m *Manager) IsEnabled() bool {
+	k, err := registry.OpenKey(registry.CURRENT_USER, regPath, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	v, _, err := k.GetIntegerValue("ProxyEnable")
+	return err == nil && v != 0
+}
+
 func (m *Manager) Disable() error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, regPath, registry.SET_VALUE)
 	if err != nil {

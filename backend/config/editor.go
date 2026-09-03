@@ -626,6 +626,20 @@ func SetMixedInbound(cfgPath string, enable bool, listen string, port int) error
 
 // ─── Applied node detection ──────────────────────────────────────────────────
 
+// HasTunInbound 判断配置文件当前是否含 tun inbound（用于切换配置前探测 TUN 状态）。
+func HasTunInbound(cfgPath string) bool {
+	cfg, err := loadJSON(cfgPath)
+	if err != nil {
+		return false
+	}
+	for _, ib := range getInbounds(cfg) {
+		if m, ok := ib.(map[string]interface{}); ok && m["type"] == "tun" {
+			return true
+		}
+	}
+	return false
+}
+
 // FindAppliedNodeID 读取配置文件，找出当前 "proxy" outbound 对应的节点 ID。
 // 比较方式：把配置中的 proxy outbound 与每个节点的
 // (RawOutbound 或 生成的 outbound) 规范化为 JSON 后逐一比对。
