@@ -36,6 +36,9 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
+	// 启动系统托盘（左键显示主窗口，右键菜单可退出）
+	setupTray(ctx)
+
 	// if startup itself panics, record it instead of dying silently
 	defer func() {
 		if r := recover(); r != nil {
@@ -63,6 +66,9 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// 移除托盘图标
+	stopTray()
+
 	// 退出时按设置还原系统代理（需在杀掉 sing-box 前执行，避免残留）
 	if a.cfgManager != nil && a.cfgManager.Settings.ExitDisableProxy && a.proxy != nil {
 		a.proxy.Disable()

@@ -235,7 +235,6 @@ showToast('切换配置失败: ' + (e?.message || e), 'error')
       if (on) {
         await api.StartSingBox()
         showToast('sing-box 已启动', 'success')
-        setActiveTab('log')
       } else {
         await api.StopSingBox()
         showToast('sing-box 已停止', 'info')

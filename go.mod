@@ -3,6 +3,7 @@ module singbox-gui
 go 1.25.0
 
 require (
+	github.com/energye/systray v1.0.3
 	github.com/google/uuid v1.6.0
 	github.com/wailsapp/wails/v2 v2.15.0
 	golang.org/x/sys v0.47.0

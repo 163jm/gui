@@ -16,16 +16,17 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:            "SingBox GUI",
-		Width:            900,
-		Height:           650,
-		MinWidth:         750,
-		MinHeight:        500,
-		DisableResize:    false,
-		Fullscreen:       false,
-		Frameless:        false,
-		StartHidden:      false,
-		HideWindowOnClose: false,
+		Title:         "SingBox GUI",
+		Width:         900,
+		Height:        650,
+		MinWidth:      750,
+		MinHeight:     500,
+		DisableResize: false,
+		Fullscreen:    false,
+		Frameless:     false,
+		StartHidden:   false,
+		// 点击窗口关闭按钮时仅隐藏窗口（最小化到托盘），程序继续在后台运行
+		HideWindowOnClose: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
@@ -36,12 +37,12 @@ func main() {
 			app,
 		},
 		Windows: &windows.Options{
-			WebviewIsTransparent:              false,
-			WindowIsTranslucent:               false,
-			DisableWindowIcon:                 false,
-			IsZoomControlEnabled:              false,
-			DisablePinchZoom:                  true,
-			Theme:                             windows.Light,
+			WebviewIsTransparent: false,
+			WindowIsTranslucent:  false,
+			DisableWindowIcon:    false,
+			IsZoomControlEnabled: false,
+			DisablePinchZoom:     true,
+			Theme:                windows.Light,
 		},
 	})
 
