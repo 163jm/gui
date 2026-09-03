@@ -164,9 +164,23 @@ export default function App() {
   const handleSaveSettings = async (s) => {
     try {
       await api.SaveSettings(s)
+      // 重启受影响的开关，让设置即时生效：
+      // 核心在跑则先停 → 重写 TUN/系统代理配置 → 再拉起核心
+      const wasRunning = singboxStatus.running
+      if (wasRunning) { await api.StopSingBox().catch(() => {}) }
+      if (tunEnabled) {
+        await api.DisableTun()
+        await api.EnableTun()
+      }
+      if (proxyEnabled) {
+        await api.DisableSystemProxy()
+        await api.EnableSystemProxy()
+      }
+      if (wasRunning) { await api.StartSingBox() }
       await loadSettings()
+      await loadApplied()
       setShowSettingsModal(false)
-      showToast('设置已保存', 'success')
+      showToast(wasRunning ? '设置已保存，核心已重启生效' : '设置已保存', 'success')
     } catch (e) {
       showToast('保存设置失败: ' + (e?.message || e), 'error')
     }
@@ -302,6 +316,7 @@ nodeCount={nodes.length}
         tunEnabled={tunEnabled}
         proxyEnabled={proxyEnabled}
         singboxRunning={singboxStatus.running}
+        proxyAddr={`127.0.0.1:${settings.proxy_port || 2080}`}
         onToggleTun={handleToggleTun}
         onToggleProxy={handleToggleProxy}
         onToggleSingbox={handleToggleSingbox}

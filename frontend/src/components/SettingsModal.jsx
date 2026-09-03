@@ -8,6 +8,9 @@ const TUN_STACKS = [
   { value: 'mixed', label: 'mixed（混合模式）' },
 ]
 
+// 系统代理监听地址可选项（Windows 系统代理始终指向 127.0.0.1）
+const LISTEN_ADDRS = ['127.0.0.1', '0.0.0.0', '::']
+
 export default function SettingsModal({ settings, onSave, onClose }) {
   const [form, setForm] = useState(() => ({
     proxy_listen: '127.0.0.1',
@@ -57,7 +60,6 @@ export default function SettingsModal({ settings, onSave, onClose }) {
   const handleSave = async () => {
     // 前端预校验，给出即时反馈
     const port = Number(form.proxy_port)
-    if (!String(form.proxy_listen).trim()) return alert('监听地址不能为空')
     if (!Number.isInteger(port) || port < 1 || port > 65535) return alert('代理端口必须是 1-65535 的整数')
     if (!String(form.sub_user_agent).trim()) return alert('订阅 User-Agent 不能为空')
     const checks = [
@@ -98,12 +100,16 @@ export default function SettingsModal({ settings, onSave, onClose }) {
             <div className="settings-section-title">系统代理</div>
             <div className="settings-row">
               <label className="settings-label">监听地址</label>
-              <input
+              <select
                 className="modal-input settings-input"
-                value={form.proxy_listen}
+                value={LISTEN_ADDRS.includes(form.proxy_listen) ? form.proxy_listen : '127.0.0.1'}
                 onChange={e => set('proxy_listen', e.target.value)}
-                placeholder="127.0.0.1"
-              />
+              >
+                {LISTEN_ADDRS.map(addr => (
+                  <option key={addr} value={addr}>{addr}</option>
+                ))}
+              </select>
+              <span className="settings-hint">0.0.0.0 / :: 允许局域网访问</span>
             </div>
             <div className="settings-row">
               <label className="settings-label">代理端口</label>

@@ -2,7 +2,7 @@ import React from 'react'
 import './BottomBar.css'
 
 export default function BottomBar({
-  tunEnabled, proxyEnabled, singboxRunning,
+  tunEnabled, proxyEnabled, singboxRunning, proxyAddr,
   onToggleTun, onToggleProxy, onToggleSingbox
 }) {
   return (
@@ -22,7 +22,7 @@ export default function BottomBar({
         enabled={proxyEnabled}
         onToggle={onToggleProxy}
         activeColor="var(--accent)"
-        desc={proxyEnabled ? '127.0.0.1:2080' : '点击设置系统代理'}
+        desc={proxyEnabled ? (proxyAddr || '系统代理已启用') : '点击设置系统代理'}
       />
       <div className="bottom-divider" />
       <ToggleButton

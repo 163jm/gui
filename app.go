@@ -289,6 +289,7 @@ func (a *App) UpdateNode(n node.Node) error {
 }
 
 // ApplyNode: replace the "proxy" outbound in config file with this node
+// 若核心正在运行，则先停核心、改配置、再拉起（保证新节点即时生效）
 func (a *App) ApplyNode(id string) error {
 	return guardE("ApplyNode", func() error {
 		cfgPath := a.cfgManager.Settings.ConfigPath
@@ -299,7 +300,21 @@ func (a *App) ApplyNode(id string) error {
 		if n == nil {
 			return fmt.Errorf("节点不存在")
 		}
-		return config.ApplyNodeToConfig(cfgPath, *n)
+		wasRunning := a.sbProcess.GetStatus().Running
+		if wasRunning {
+			if err := a.sbProcess.Stop(); err != nil {
+				return fmt.Errorf("停止核心失败: %v", err)
+			}
+		}
+		if err := config.ApplyNodeToConfig(cfgPath, *n); err != nil {
+			return err
+		}
+		if wasRunning {
+			if err := a.sbProcess.Start(getSingBoxBin(), cfgPath); err != nil {
+				return fmt.Errorf("节点已写入配置，但核心重启失败: %v（请手动启动核心）", err)
+			}
+		}
+		return nil
 	})
 }
 
@@ -493,7 +508,8 @@ func (a *App) EnableSystemProxy() error {
 		if err := config.SetMixedInbound(cfgPath, true, s.ProxyListen, s.ProxyPort); err != nil {
 			return err
 		}
-		return a.proxy.Enable(s.ProxyListen, s.ProxyPort)
+		// Windows 系统代理地址固定为 127.0.0.1（监听地址可以是 0.0.0.0/::，但注册表里不能）
+		return a.proxy.Enable("127.0.0.1", s.ProxyPort)
 	})
 }
 
