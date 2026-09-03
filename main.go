@@ -29,7 +29,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 18, G: 20, B: 26, A: 255},
+		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 255},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
@@ -41,7 +41,7 @@ func main() {
 			DisableWindowIcon:                 false,
 			IsZoomControlEnabled:              false,
 			DisablePinchZoom:                  true,
-			Theme:                             windows.Dark,
+			Theme:                             windows.Light,
 		},
 	})
 
