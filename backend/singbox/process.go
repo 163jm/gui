@@ -36,6 +36,7 @@ func (p *Process) Start(binPath, cfgPath string) error {
 	}
 
 	p.cmd = exec.Command(binPath, "run", "-c", cfgPath)
+	hideWindow(p.cmd)
 	p.log = []string{}
 
 	// capture stdout+stderr
