@@ -106,15 +106,9 @@ jobs:
 
           Compress-Archive -Path "release\singbox-gui" -DestinationPath "singbox-gui-windows-amd64.zip"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: singbox-gui-windows-amd64
-          path: singbox-gui-windows-amd64.zip
-
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: test
+          name: test
           files: singbox-gui-windows-amd64.zip
-          generate_release_notes: true
