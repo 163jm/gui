@@ -185,9 +185,6 @@ export default function App() {
     <div className="app">
       {/* Title bar */}
       <div className="titlebar" style={{ '--wails-draggable': 'drag' }}>
-        <div className="titlebar-left">
-          <span className="titlebar-icon">◈</span>
-        </div>
         <div className="titlebar-tabs">
           <button
             className={`tab-btn${activeTab === 'nodes' ? ' active' : ''}`}
