@@ -187,7 +187,6 @@ export default function App() {
       <div className="titlebar" style={{ '--wails-draggable': 'drag' }}>
         <div className="titlebar-left">
           <span className="titlebar-icon">◈</span>
-          <span className="titlebar-title">SingBox GUI</span>
         </div>
         <div className="titlebar-tabs">
           <button
