@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"runtime"
 
 	"github.com/energye/systray"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -14,11 +15,15 @@ import (
 // appCtx 由 startup 注入，供托盘菜单调用 Wails runtime。
 var appCtx context.Context
 
-// setupTray 以外部消息循环模式启动系统托盘（与 Wails 主循环共存）。
+// setupTray 启动系统托盘。
+// Windows 的窗口消息只投递到创建窗口的 OS 线程队列，因此必须在
+// 同一个锁定线程上创建托盘窗口并泵送消息，否则点击事件永远收不到。
 func setupTray(ctx context.Context) {
 	appCtx = ctx
-	start, _ := systray.RunWithExternalLoop(onTrayReady, onTrayExit)
-	go start()
+	go func() {
+		runtime.LockOSThread()
+		systray.Run(onTrayReady, onTrayExit)
+	}()
 }
 
 // stopTray 移除托盘图标（在应用退出时调用）。
