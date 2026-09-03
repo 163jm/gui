@@ -51,6 +51,131 @@ type singboxOutbound struct {
 	UUID       string      `json:"uuid,omitempty"`
 	Password   string      `json:"password,omitempty"`
 	Method     string      `json:"method,omitempty"`
+
+	// VMess
+	AlterID  interface{} `json:"alter_id,omitempty"`
+	Security string      `json:"security,omitempty"`
+
+	// VLESS
+	Flow string `json:"flow,omitempty"`
+
+	// Shadowsocks plugin
+	Plugin     string `json:"plugin,omitempty"`
+	PluginOpts string `json:"plugin_opts,omitempty"`
+
+	// Hysteria2 / TUIC
+	UpMbps            int    `json:"up_mbps,omitempty"`
+	DownMbps          int    `json:"down_mbps,omitempty"`
+	CongestionControl string `json:"congestion_control,omitempty"`
+	UDPRelayMode      string `json:"udp_relay_mode,omitempty"`
+	Obfs              *struct {
+		Type     string `json:"type,omitempty"`
+		Password string `json:"password,omitempty"`
+	} `json:"obfs,omitempty"`
+
+	// TLS block (all TLS-capable protocols)
+	TLS *singboxTLS `json:"tls,omitempty"`
+
+	// Transport block (vmess/vless/trojan)
+	Transport *singboxTransport `json:"transport,omitempty"`
+}
+
+type singboxTLS struct {
+	Enabled    bool     `json:"enabled,omitempty"`
+	ServerName string   `json:"server_name,omitempty"`
+	Insecure   bool     `json:"insecure,omitempty"`
+	ALPN       []string `json:"alpn,omitempty"`
+	UTLS       *struct {
+		Enabled     bool   `json:"enabled,omitempty"`
+		Fingerprint string `json:"fingerprint,omitempty"`
+	} `json:"utls,omitempty"`
+	Reality *struct {
+		Enabled   bool   `json:"enabled,omitempty"`
+		PublicKey string `json:"public_key,omitempty"`
+		ShortID   string `json:"short_id,omitempty"`
+	} `json:"reality,omitempty"`
+}
+
+type singboxTransport struct {
+	Type        string            `json:"type,omitempty"`
+	Path        string            `json:"path,omitempty"`
+	Host        interface{}       `json:"host,omitempty"` // string (httpupgrade) or []string (http)
+	Headers     map[string]string `json:"headers,omitempty"`
+	ServiceName string            `json:"service_name,omitempty"`
+
+	MaxEarlyData        int    `json:"max_early_data,omitempty"`
+	EarlyDataHeaderName string `json:"early_data_header_name,omitempty"`
+}
+
+// toTransportConfig converts a parsed sing-box transport block into our TransportConfig.
+func (t *singboxTransport) toTransportConfig() *TransportConfig {
+	if t == nil || t.Type == "" {
+		return nil
+	}
+	out := &TransportConfig{
+		Type:                t.Type,
+		Path:                t.Path,
+		ServiceName:         t.ServiceName,
+		MaxEarlyData:        t.MaxEarlyData,
+		EarlyDataHeaderName: t.EarlyDataHeaderName,
+	}
+	switch t.Type {
+	case "ws":
+		// Host lives in headers["Host"] for ws
+		if t.Headers != nil {
+			if h, ok := t.Headers["Host"]; ok {
+				out.Host = h
+			} else if h, ok := t.Headers["host"]; ok {
+				out.Host = h
+			}
+		}
+	case "http":
+		// Host is a []string array for http/h2
+		switch h := t.Host.(type) {
+		case string:
+			out.Host = h
+		case []interface{}:
+			if len(h) > 0 {
+				out.Host, _ = h[0].(string)
+			}
+		}
+	case "httpupgrade":
+		// Host is a top-level string field
+		if h, ok := t.Host.(string); ok {
+			out.Host = h
+		}
+	}
+	return out
+}
+
+// toSNIAndALPN extracts SNI/ALPN common to any TLS-capable node.
+func (t *singboxTLS) sni() string {
+	if t == nil {
+		return ""
+	}
+	return t.ServerName
+}
+
+func (t *singboxTLS) alpn() []string {
+	if t == nil {
+		return nil
+	}
+	return t.ALPN
+}
+
+func (t *singboxTLS) insecure() bool {
+	return t != nil && t.Insecure
+}
+
+func (t *singboxTLS) fingerprint() string {
+	if t == nil || t.UTLS == nil {
+		return ""
+	}
+	return t.UTLS.Fingerprint
+}
+
+func (t *singboxTLS) enabled() bool {
+	return t != nil && t.Enabled
 }
 
 type singboxConfig struct {
@@ -81,20 +206,72 @@ func parseSingBoxJSON(content string) ([]Node, error) {
 			Address: ob.Server, Port: ob.ServerPort,
 			Protocol: ob.Type,
 		}
+		transport := ob.Transport.toTransportConfig()
+
 		switch ob.Type {
 		case "vmess":
-			n.VMess = &VMessConfig{UUID: ob.UUID, Security: "auto"}
+			n.VMess = &VMessConfig{
+				UUID:      ob.UUID,
+				AlterID:   toInt(ob.AlterID),
+				Security:  orDefault(ob.Security, "auto"),
+				TLS:       ob.TLS.enabled(),
+				SNI:       ob.TLS.sni(),
+				ALPN:      ob.TLS.alpn(),
+				Transport: transport,
+			}
 		case "vless":
-			n.VLESS = &VLESSConfig{UUID: ob.UUID}
+			n.VLESS = &VLESSConfig{
+				UUID:        ob.UUID,
+				Flow:        ob.Flow,
+				TLS:         ob.TLS.enabled(),
+				SNI:         ob.TLS.sni(),
+				ALPN:        ob.TLS.alpn(),
+				Fingerprint: ob.TLS.fingerprint(),
+				Transport:   transport,
+			}
+			if ob.TLS != nil && ob.TLS.Reality != nil {
+				n.VLESS.PublicKey = ob.TLS.Reality.PublicKey
+				n.VLESS.ShortID = ob.TLS.Reality.ShortID
+			}
 		case "trojan":
-			n.Trojan = &TrojanConfig{Password: ob.Password}
+			n.Trojan = &TrojanConfig{
+				Password:  ob.Password,
+				SNI:       ob.TLS.sni(),
+				ALPN:      ob.TLS.alpn(),
+				Transport: transport,
+			}
 		case "shadowsocks":
 			n.Protocol = "ss"
-			n.SS = &SSConfig{Method: ob.Method, Password: ob.Password}
+			n.SS = &SSConfig{
+				Method:     ob.Method,
+				Password:   ob.Password,
+				Plugin:     ob.Plugin,
+				PluginOpts: ob.PluginOpts,
+			}
 		case "hysteria2":
-			n.Hysteria2 = &Hysteria2Config{Password: ob.Password}
+			cfg := &Hysteria2Config{
+				Password: ob.Password,
+				SNI:      ob.TLS.sni(),
+				Insecure: ob.TLS.insecure(),
+				ALPN:     ob.TLS.alpn(),
+				UpMbps:   ob.UpMbps,
+				DownMbps: ob.DownMbps,
+			}
+			if ob.Obfs != nil {
+				cfg.Obfs = ob.Obfs.Type
+				cfg.ObfsPassword = ob.Obfs.Password
+			}
+			n.Hysteria2 = cfg
 		case "tuic":
-			n.TUIC = &TUICConfig{UUID: ob.UUID, Password: ob.Password, CongestionControl: "cubic"}
+			n.TUIC = &TUICConfig{
+				UUID:              ob.UUID,
+				Password:          ob.Password,
+				SNI:               ob.TLS.sni(),
+				ALPN:              ob.TLS.alpn(),
+				Insecure:          ob.TLS.insecure(),
+				CongestionControl: orDefault(ob.CongestionControl, "cubic"),
+				UDPRelayMode:      ob.UDPRelayMode,
+			}
 		}
 		if n.Name == "" {
 			n.Name = fmt.Sprintf("%s-%s:%d", ob.Type, ob.Server, ob.ServerPort)
