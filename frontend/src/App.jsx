@@ -14,6 +14,7 @@ export default function App() {
   const [groups, setGroups] = useState([{ id: 'default', name: '默认', is_default: true }])
   const [activeGroupId, setActiveGroupId] = useState('default') // 启动时显示 默认 分组
   const [settings, setSettings] = useState({ config_path: '', subscriptions: [] })
+  const [configFiles, setConfigFiles] = useState([])
   const [singboxStatus, setSingboxStatus] = useState({ running: false, pid: 0 })
   const [tunEnabled, setTunEnabled] = useState(false)
   const [proxyEnabled, setProxyEnabled] = useState(false)
@@ -53,10 +54,35 @@ export default function App() {
     } catch (e) { /* ignore */ }
   }, [])
 
+  const loadConfigFiles = useCallback(async () => {
+    try {
+      const f = await api.GetConfigFiles()
+      setConfigFiles(f || [])
+    } catch (e) { /* ignore */ }
+  }, [])
+
+  // 下拉选择 configs 目录中的配置文件
+  const handleSelectConfig = useCallback(async (name) => {
+    if (!name) return
+    try {
+      const full = await api.SelectConfigFile(name)
+      showToast('已选择配置: ' + name, 'success')
+      await loadSettings()
+      return full
+    } catch (e) {
+      showToast('选择配置失败: ' + (e?.message || e), 'error')
+    }
+  }, [loadSettings, showToast])
+
+  const handleOpenConfigsDir = useCallback(async () => {
+    try { await api.OpenConfigsDir() } catch (e) { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     loadNodes()
     loadGroups()
     loadSettings()
+    loadConfigFiles()
 
     // poll singbox status
     pollRef.current = setInterval(async () => {
@@ -69,17 +95,16 @@ export default function App() {
     return () => clearInterval(pollRef.current)
   }, [loadNodes, loadGroups, loadSettings])
 
-  // ─── Actions ──────────────────────────────────────────────────────────────
+// ─── Actions ──────────────────────────────────────────────────────────────
 
-  const handleSelectConfig = async () => {
+  const handleClearNodes = async () => {
     try {
-      const path = await api.SelectConfigFile()
-      if (path) {
-        setSettings(s => ({ ...s, config_path: path }))
-        showToast('已选择配置文件', 'success')
-      }
+      if (!window.confirm('确认清空所有节点？')) return
+      await api.ClearNodes()
+      await loadNodes()
+      showToast('已清空所有节点', 'success')
     } catch (e) {
-      showToast('选择文件失败: ' + e, 'error')
+      showToast('清空失败: ' + e, 'error')
     }
   }
 
@@ -109,18 +134,6 @@ export default function App() {
       showToast('订阅拉取失败: ' + e, 'error')
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleClearNodes = async () => {
-    if (!window.confirm || window.confirm('确认清空所有节点？')) {
-      try {
-        await api.ClearNodes()
-        setNodes([])
-        showToast('已清空节点列表', 'info')
-      } catch (e) {
-        showToast('清空失败: ' + e, 'error')
-      }
     }
   }
 
@@ -221,14 +234,17 @@ export default function App() {
         </div>
       </div>
 
-      {/* Config bar */}
-      <ConfigBar
-        configPath={settings.config_path}
-        onSelectConfig={handleSelectConfig}
-        onImport={() => setShowImportModal(true)}
-        onSubscription={() => setShowSubModal(true)}
-        onClear={handleClearNodes}
-        nodeCount={nodes.length}
+{/* Config bar */}
+<ConfigBar
+configPath={settings.config_path}
+configFiles={configFiles}
+onSelectConfig={handleSelectConfig}
+onRefreshConfigs={loadConfigFiles}
+onOpenConfigsDir={handleOpenConfigsDir}
+onImport={() => setShowImportModal(true)}
+onSubscription={() => setShowSubModal(true)}
+onClear={handleClearNodes}
+nodeCount={nodes.length}
         loading={loading}
       />
 

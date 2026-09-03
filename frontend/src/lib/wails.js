@@ -21,9 +21,11 @@ export const api = {
   MoveNodeUp: (id) => call('MoveNodeUp', id),
   MoveNodeDown: (id) => call('MoveNodeDown', id),
 
-  // Settings
-  GetSettings: () => call('GetSettings'),
-  SelectConfigFile: () => call('SelectConfigFile'),
+// Settings
+GetSettings: () => call('GetSettings'),
+GetConfigFiles: () => call('GetConfigFiles'),
+SelectConfigFile: (name) => call('SelectConfigFile', name),
+OpenConfigsDir: () => call('OpenConfigsDir'),
   GetSubscriptions: () => call('GetSubscriptions'),
   RemoveSubscription: (url) => call('RemoveSubscription', url),
   RefreshSubscription: (url, groupID) => call('RefreshSubscription', url, groupID),
@@ -105,8 +107,10 @@ async function mockCall(method, ...args) {
       if (i >= 0 && i < mockNodes.length - 1) { [mockNodes[i + 1], mockNodes[i]] = [mockNodes[i], mockNodes[i + 1]] }
       return null
     }
-    case 'GetSettings': return { ...mockSettings }
-    case 'SelectConfigFile': mockSettings.config_path = 'C:\\Users\\user\\singbox\\config.json'; return mockSettings.config_path
+case 'GetSettings': return { ...mockSettings }
+case 'GetConfigFiles': return ['config.example.json']
+case 'SelectConfigFile': mockSettings.config_path = 'configs\\' + (args[0] || ''); return mockSettings.config_path
+case 'OpenConfigsDir': return null
     case 'GetSubscriptions': return [...mockSettings.subscriptions]
     case 'RemoveSubscription': mockSettings.subscriptions = mockSettings.subscriptions.filter(s => s !== args[0]); return null
     case 'RefreshSubscription': return 3

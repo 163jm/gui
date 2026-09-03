@@ -1,14 +1,36 @@
 import React from 'react'
 import './ConfigBar.css'
 
-export default function ConfigBar({ configPath, onSelectConfig, onImport, onSubscription, onClear, nodeCount, loading }) {
+// 从完整路径提取文件名(用于回显当前选中的下拉项)
+function basename(p) {
+  if (!p) return ''
+  return p.split(/[\\/]/).pop() || ''
+}
+
+export default function ConfigBar({ configPath, configFiles = [], onSelectConfig, onRefreshConfigs, onOpenConfigsDir, onImport, onSubscription, onClear, nodeCount, loading }) {
+  const selectedName = basename(configPath)
+  const value = configFiles.includes(selectedName) ? selectedName : ''
+
   return (
     <div className="config-bar">
-      <div className="config-path-area" onClick={onSelectConfig} title={configPath || '点击选择配置文件'}>
+      <div className="config-path-area" title={`配置文件来自程序同目录的 configs 文件夹${configPath ? '\n当前: ' + configPath : ''}`}>
         <span className="config-path-icon">⚙</span>
-        <span className="config-path-text">
-          {configPath ? configPath : <span className="config-path-placeholder">点击选择 sing-box 配置文件…</span>}
-        </span>
+        <select
+          className={`config-select${value ? ' has-value' : ''}`}
+          value={value}
+          onChange={e => onSelectConfig(e.target.value)}
+        >
+          <option value="">
+            {configFiles.length > 0
+              ? (value ? value : '— 选择 sing-box 配置文件 —')
+              : 'configs 目录为空，请放入 json 配置…'}
+          </option>
+          {configFiles.map(f => (
+            <option key={f} value={f}>{f}</option>
+          ))}
+        </select>
+        <button className="config-mini-btn" onClick={onRefreshConfigs} title="重新扫描 configs 目录">↻</button>
+        <button className="config-mini-btn" onClick={onOpenConfigsDir} title="打开 configs 目录">⌂</button>
       </div>
       <div className="config-actions">
         <button className="action-btn" onClick={onImport} disabled={loading} title="从剪贴板或文本导入节点链接">

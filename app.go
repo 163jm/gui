@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
+	"strings"
 	"time"
 
 	"singbox-gui/backend/config"
@@ -44,6 +47,8 @@ func (a *App) startup(ctx context.Context) {
 	// init data dir
 	dataDir := getDataDir()
 	os.MkdirAll(dataDir, 0755)
+	// configs 目录(与 data 同级, 存放 sing-box 配置 json)
+	os.MkdirAll(getConfigsDir(), 0755)
 
 	// SQLite 节点存储
 	a.nodeStore = node.NewStore(filepath.Join(dataDir, "nodes.db"))
@@ -70,6 +75,78 @@ func getDataDir() string {
 		return "."
 	}
 	return filepath.Join(filepath.Dir(exe), "data")
+}
+
+// getConfigsDir returns the configs directory next to the executable
+// (same level as the data dir). It holds sing-box config json files.
+func getConfigsDir() string {
+	return filepath.Join(filepath.Dir(getDataDir()), "configs")
+}
+
+// ensureConfigsDir creates the configs dir if missing.
+func ensureConfigsDir() {
+	os.MkdirAll(getConfigsDir(), 0755)
+}
+
+// GetConfigFiles lists *.json files in the configs directory (sorted by name).
+// The directory is created on demand.
+func (a *App) GetConfigFiles() []string {
+	return guardP("GetConfigFiles", func() []string {
+		ensureConfigsDir()
+		entries, err := os.ReadDir(getConfigsDir())
+		if err != nil {
+			return []string{}
+		}
+		var files []string
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if strings.EqualFold(filepath.Ext(e.Name()), ".json") {
+				files = append(files, e.Name())
+			}
+		}
+		sort.Strings(files)
+		if files == nil {
+			files = []string{}
+		}
+		return files
+	})
+}
+
+// SelectConfigFile selects a config from the configs directory by filename.
+// (Replaces the native file dialog: the dropdown lists configs/*.json.)
+func (a *App) SelectConfigFile(name string) (string, error) {
+	return guardR("SelectConfigFile", func() (string, error) {
+		if a.cfgManager == nil {
+			return "", fmt.Errorf("设置尚未就绪，请重启应用")
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return "", fmt.Errorf("未指定配置文件")
+		}
+		// 安全检查: 只允许纯文件名, 禁止路径穿越
+		if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") || filepath.Base(name) != name {
+			return "", fmt.Errorf("非法文件名: %s", name)
+		}
+		full := filepath.Join(getConfigsDir(), name)
+		if st, err := os.Stat(full); err != nil || st.IsDir() {
+			return "", fmt.Errorf("配置文件不存在: %s", name)
+		}
+		a.cfgManager.Settings.ConfigPath = full
+		if err := a.cfgManager.Save(); err != nil {
+			return "", fmt.Errorf("保存设置失败: %v", err)
+		}
+		return full, nil
+	})
+}
+
+// OpenConfigsDir opens the configs directory in Windows Explorer.
+func (a *App) OpenConfigsDir() error {
+	return guardE("OpenConfigsDir", func() error {
+		ensureConfigsDir()
+		return exec.Command("explorer.exe", getConfigsDir()).Start()
+	})
 }
 
 // ─── Crash guard ──────────────────────────────────────────────────────────────
@@ -260,37 +337,8 @@ func (a *App) GetSettings() config.Settings {
 	})
 }
 
-// SelectConfigFile opens the native file dialog. Hardened: nil-context safe,
-// user-cancel returns ("", nil), and any panic is recovered by guardR.
-func (a *App) SelectConfigFile() (string, error) {
-	return guardR("SelectConfigFile", func() (string, error) {
-		if a.ctx == nil {
-			return "", fmt.Errorf("应用尚未初始化完成，请稍后重试")
-		}
-		if a.cfgManager == nil {
-			return "", fmt.Errorf("设置尚未就绪，请重启应用")
-		}
-		path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-			Title: "选择 sing-box 配置文件",
-			Filters: []runtime.FileFilter{
-				{DisplayName: "JSON 配置文件", Pattern: "*.json"},
-				{DisplayName: "所有文件", Pattern: "*.*"},
-			},
-		})
-		if err != nil {
-			// dialog failure must not kill the app — report it as a normal error
-			return "", fmt.Errorf("打开文件对话框失败: %v", err)
-		}
-		if path == "" {
-			return "", nil // user cancelled
-		}
-		a.cfgManager.Settings.ConfigPath = path
-		if err := a.cfgManager.Save(); err != nil {
-			return "", fmt.Errorf("保存设置失败: %v", err)
-		}
-		return path, nil
-	})
-}
+// The old native file dialog has been replaced by the configs-dir dropdown:
+// see GetConfigFiles / SelectConfigFile(name) / OpenConfigsDir.
 
 func (a *App) GetSubscriptions() []string {
 	return guardP("GetSubscriptions", func() []string {
