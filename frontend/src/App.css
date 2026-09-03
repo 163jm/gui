@@ -20,26 +20,6 @@
   -webkit-app-region: drag;
 }
 
-.titlebar-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 100px;
-}
-
-.titlebar-icon {
-  color: var(--accent);
-  font-size: 16px;
-  line-height: 1;
-}
-
-.titlebar-title {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-0);
-  letter-spacing: 0.3px;
-}
-
 .titlebar-tabs {
   display: flex;
   gap: 2px;
