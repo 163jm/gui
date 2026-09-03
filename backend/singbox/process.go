@@ -18,6 +18,7 @@ type Status struct {
 type Process struct {
 	mu     sync.Mutex
 	cmd    *exec.Cmd
+	exited chan struct{} // 当前 cmd 被回收时关闭，用于 Stop 等待进程真正退出
 	status Status
 	log    []string
 	maxLog int
@@ -54,6 +55,7 @@ func (p *Process) Start(binPath, cfgPath string) error {
 	p.cmd = exec.Command(binPath, "run", "-c", cfgPath)
 	hideWindow(p.cmd)
 	p.log = []string{}
+	p.exited = make(chan struct{})
 
 	// capture stdout+stderr
 	stdout, err := p.cmd.StdoutPipe()
@@ -73,6 +75,9 @@ func (p *Process) Start(binPath, cfgPath string) error {
 	p.status = Status{Running: true, PID: p.cmd.Process.Pid}
 	p.appendLog(fmt.Sprintf("[%s] sing-box 已启动 PID=%d", now(), p.cmd.Process.Pid))
 
+	cmd := p.cmd
+	exited := p.exited
+
 	// read logs
 	go func() {
 		scanner := bufio.NewScanner(stdout)
@@ -87,19 +92,23 @@ func (p *Process) Start(binPath, cfgPath string) error {
 		}
 	}()
 
-	// watch process
+	// watch process：仅当 p.cmd 仍是自己时才更新状态，
+	// 防止旧进程的 watcher 在 Stop→Start 快速重启后覆盖新进程状态
 	go func() {
-		err := p.cmd.Wait()
+		err := cmd.Wait()
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if err != nil {
-			p.appendLog(fmt.Sprintf("[%s] sing-box 退出: %v", now(), err))
-			p.status = Status{Running: false, Error: err.Error()}
-		} else {
-			p.appendLog(fmt.Sprintf("[%s] sing-box 正常退出", now()))
-			p.status = Status{Running: false}
+		if p.cmd == cmd {
+			if err != nil {
+				p.appendLog(fmt.Sprintf("[%s] sing-box 退出: %v", now(), err))
+				p.status = Status{Running: false, Error: err.Error()}
+			} else {
+				p.appendLog(fmt.Sprintf("[%s] sing-box 正常退出", now()))
+				p.status = Status{Running: false}
+			}
+			p.cmd = nil
 		}
-		p.cmd = nil
+		close(exited)
 	}()
 
 	return nil
@@ -107,19 +116,35 @@ func (p *Process) Start(binPath, cfgPath string) error {
 
 func (p *Process) Stop() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if p.cmd == nil || p.cmd.Process == nil {
 		p.status = Status{Running: false}
+		p.mu.Unlock()
 		return nil
 	}
-
-	if err := p.cmd.Process.Kill(); err != nil {
-		return fmt.Errorf("停止失败: %v", err)
-	}
-	p.appendLog(fmt.Sprintf("[%s] sing-box 已停止", now()))
+	exited := p.exited
+	err := p.cmd.Process.Kill()
 	p.cmd = nil
 	p.status = Status{Running: false}
+	p.mu.Unlock()
+
+	if err != nil {
+		return fmt.Errorf("停止失败: %v", err)
+	}
+
+	// 等待进程真正退出并被 watcher 回收：
+	// ① 保证 Stop 返回后端口/TUN 已释放，紧接的 Start 不会绑端口失败；
+	// ② 保证旧 watcher 已完成，状态不会被延迟覆盖。
+	if exited != nil {
+		select {
+		case <-exited:
+		case <-time.After(3 * time.Second):
+			return fmt.Errorf("等待核心退出超时，进程可能仍在运行")
+		}
+	}
+
+	p.mu.Lock()
+	p.appendLog(fmt.Sprintf("[%s] sing-box 已停止", now()))
+	p.mu.Unlock()
 	return nil
 }
 
