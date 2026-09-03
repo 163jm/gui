@@ -53,14 +53,20 @@ func (a *App) startup(ctx context.Context) {
 	// SQLite 节点存储
 	a.nodeStore = node.NewStore(filepath.Join(dataDir, "nodes.db"))
 	a.cfgManager = config.NewManager(filepath.Join(dataDir, "settings.json"))
-	a.sbProcess = singbox.NewProcess()
 	a.proxy = sysproxy.NewManager()
 
 	a.nodeStore.Load()
 	a.cfgManager.Load()
+
+	// sing-box 进程（日志上限取自设置）
+	a.sbProcess = singbox.NewProcess(a.cfgManager.Settings.LogMaxLines)
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// 退出时按设置还原系统代理（需在杀掉 sing-box 前执行，避免残留）
+	if a.cfgManager != nil && a.cfgManager.Settings.ExitDisableProxy && a.proxy != nil {
+		a.proxy.Disable()
+	}
 	// cleanup on exit: kill singbox if running
 	a.sbProcess.Stop()
 	// close node database
@@ -237,7 +243,9 @@ func (a *App) ImportNodes(content, groupID string) (int, error) {
 
 func (a *App) FetchSubscription(url, groupID string) (int, error) {
 	return guardR("FetchSubscription", func() (int, error) {
-		nodes, err := node.FetchSubscription(url)
+		nodes, err := node.FetchSubscription(url,
+			a.cfgManager.Settings.SubUserAgent,
+			a.cfgManager.Settings.SubTimeoutSec)
 		if err != nil {
 			return 0, err
 		}
@@ -328,12 +336,48 @@ func (a *App) MoveNodeDown(id string) error {
 
 // ─── Config file APIs ────────────────────────────────────────────────────────
 
+// GetSettings returns the full settings object.
 func (a *App) GetSettings() config.Settings {
 	return guardP("GetSettings", func() config.Settings {
 		if a.cfgManager == nil {
-			return config.Settings{}
+			return config.Defaults()
 		}
 		return a.cfgManager.Settings
+	})
+}
+
+// SaveSettings validates and persists the full settings object.
+// 部分设置（日志上限）立即生效；代理/TUN 相关设置在下次开启时生效。
+func (a *App) SaveSettings(s config.Settings) error {
+	return guardE("SaveSettings", func() error {
+		if a.cfgManager == nil {
+			return fmt.Errorf("设置尚未就绪，请重启应用")
+		}
+		s.ProxyListen = strings.TrimSpace(s.ProxyListen)
+		s.SubUserAgent = strings.TrimSpace(s.SubUserAgent)
+		s.Normalize()
+		if err := s.Validate(); err != nil {
+			return err
+		}
+		a.cfgManager.Settings = s
+		if err := a.cfgManager.Save(); err != nil {
+			return fmt.Errorf("保存设置失败: %v", err)
+		}
+		// 立即生效的设置
+		a.sbProcess.SetMaxLog(s.LogMaxLines)
+		return nil
+	})
+}
+
+// GetAppliedNodeID 找出配置文件中当前 "proxy" outbound 对应的节点 ID。
+// 无匹配（含未选配置/手工改配置）返回 ""。
+func (a *App) GetAppliedNodeID() string {
+	return guardP("GetAppliedNodeID", func() string {
+		cfgPath := a.cfgManager.Settings.ConfigPath
+		if cfgPath == "" {
+			return ""
+		}
+		return config.FindAppliedNodeID(cfgPath, a.nodeStore.GetAll())
 	})
 }
 
@@ -365,7 +409,9 @@ func (a *App) RemoveSubscription(url string) error {
 
 func (a *App) RefreshSubscription(url, groupID string) (int, error) {
 	return guardR("RefreshSubscription", func() (int, error) {
-		nodes, err := node.FetchSubscription(url)
+		nodes, err := node.FetchSubscription(url,
+			a.cfgManager.Settings.SubUserAgent,
+			a.cfgManager.Settings.SubTimeoutSec)
 		if err != nil {
 			return 0, err
 		}
@@ -420,7 +466,8 @@ func (a *App) EnableTun() error {
 		if cfgPath == "" {
 			return fmt.Errorf("未选择配置文件")
 		}
-		return config.SetTun(cfgPath, true)
+		s := a.cfgManager.Settings
+		return config.SetTun(cfgPath, true, s.TunStack, s.TunMTU, s.TunStrictRoute)
 	})
 }
 
@@ -430,7 +477,7 @@ func (a *App) DisableTun() error {
 		if cfgPath == "" {
 			return fmt.Errorf("未选择配置文件")
 		}
-		return config.SetTun(cfgPath, false)
+		return config.SetTun(cfgPath, false, "", 0, false)
 	})
 }
 
@@ -442,10 +489,11 @@ func (a *App) EnableSystemProxy() error {
 		if cfgPath == "" {
 			return fmt.Errorf("未选择配置文件")
 		}
-		if err := config.SetMixedInbound(cfgPath, true); err != nil {
+		s := a.cfgManager.Settings
+		if err := config.SetMixedInbound(cfgPath, true, s.ProxyListen, s.ProxyPort); err != nil {
 			return err
 		}
-		return a.proxy.Enable("127.0.0.1", 2080)
+		return a.proxy.Enable(s.ProxyListen, s.ProxyPort)
 	})
 }
 

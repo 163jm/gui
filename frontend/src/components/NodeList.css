@@ -122,6 +122,29 @@
   background: var(--accent-dim);
   border-left-color: var(--accent);
 }
+/* 已应用到配置文件的节点 */
+.node-row.applied:not(.selected) {
+  background: color-mix(in srgb, #3ddc84 8%, transparent);
+  border-left-color: #3ddc84;
+}
+.node-row.applied.selected {
+  border-left-color: #3ddc84;
+}
+
+.applied-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  border-radius: 3px;
+  color: #3ddc84;
+  border: 1px solid #3ddc8466;
+  background: #3ddc8414;
+  vertical-align: 1px;
+  flex-shrink: 0;
+}
 
 .node-proto-badge {
   font-size: 10px;

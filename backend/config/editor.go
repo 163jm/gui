@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"singbox-gui/backend/node"
 )
@@ -549,18 +550,28 @@ func buildRealityTLS(sni, publicKey, shortID, fingerprint string) map[string]int
 
 // ─── TUN inbound ─────────────────────────────────────────────────────────────
 
-var tunInbound = map[string]interface{}{
-	"type":           "tun",
-	"tag":            "tun-in",
-	"interface_name": "singbox_tun",
-	"address":        []string{"172.18.0.1/30"},
-	"mtu":            9000,
-	"auto_route":     true,
-	"strict_route":   true,
-	"stack":          "gvisor",
+// buildTunInbound 根据用户设置构建 tun inbound。
+// address 与 interface_name 保持固定（修改会导致路由残留风险，不暴露为设置项）。
+func buildTunInbound(stack string, mtu int, strictRoute bool) map[string]interface{} {
+	if stack != "gvisor" && stack != "system" && stack != "mixed" {
+		stack = "gvisor"
+	}
+	if mtu <= 0 {
+		mtu = 9000
+	}
+	return map[string]interface{}{
+		"type":           "tun",
+		"tag":            "tun-in",
+		"interface_name": "singbox_tun",
+		"address":        []string{"172.18.0.1/30"},
+		"mtu":            mtu,
+		"auto_route":     true,
+		"strict_route":   strictRoute,
+		"stack":          stack,
+	}
 }
 
-func SetTun(cfgPath string, enable bool) error {
+func SetTun(cfgPath string, enable bool, stack string, mtu int, strictRoute bool) error {
 	cfg, err := loadJSON(cfgPath)
 	if err != nil {
 		return err
@@ -574,7 +585,7 @@ func SetTun(cfgPath string, enable bool) error {
 		newInbounds = append(newInbounds, ib)
 	}
 	if enable {
-		newInbounds = append(newInbounds, tunInbound)
+		newInbounds = append(newInbounds, buildTunInbound(stack, mtu, strictRoute))
 	}
 	cfg["inbounds"] = newInbounds
 	return saveJSON(cfgPath, cfg)
@@ -582,9 +593,13 @@ func SetTun(cfgPath string, enable bool) error {
 
 // ─── Mixed inbound ────────────────────────────────────────────────────────────
 
-const MixedPort = 2080
-
-func SetMixedInbound(cfgPath string, enable bool) error {
+func SetMixedInbound(cfgPath string, enable bool, listen string, port int) error {
+	if strings.TrimSpace(listen) == "" {
+		listen = "127.0.0.1"
+	}
+	if port <= 0 {
+		port = 2080
+	}
 	cfg, err := loadJSON(cfgPath)
 	if err != nil {
 		return err
@@ -601,12 +616,60 @@ func SetMixedInbound(cfgPath string, enable bool) error {
 		newInbounds = append(newInbounds, map[string]interface{}{
 			"type":        "mixed",
 			"tag":         "mixed-in",
-			"listen":      "127.0.0.1",
-			"listen_port": MixedPort,
+			"listen":      listen,
+			"listen_port": port,
 		})
 	}
 	cfg["inbounds"] = newInbounds
 	return saveJSON(cfgPath, cfg)
+}
+
+// ─── Applied node detection ──────────────────────────────────────────────────
+
+// FindAppliedNodeID 读取配置文件，找出当前 "proxy" outbound 对应的节点 ID。
+// 比较方式：把配置中的 proxy outbound 与每个节点的
+// (RawOutbound 或 生成的 outbound) 规范化为 JSON 后逐一比对。
+// 找不到匹配返回 ""（例如配置被手工修改过）。
+func FindAppliedNodeID(cfgPath string, nodes []node.Node) string {
+	cfg, err := loadJSON(cfgPath)
+	if err != nil {
+		return ""
+	}
+	var proxyOb map[string]interface{}
+	for _, ob := range getOutbounds(cfg) {
+		if m, ok := ob.(map[string]interface{}); ok && m["tag"] == "proxy" {
+			proxyOb = m
+			break
+		}
+	}
+	if proxyOb == nil {
+		return ""
+	}
+	current, err := json.Marshal(proxyOb) // map 序列化时 key 有序，结果确定
+	if err != nil {
+		return ""
+	}
+	for _, n := range nodes {
+		var ob map[string]interface{}
+		if n.RawOutbound != nil {
+			ob = n.RawOutbound
+		} else {
+			var err error
+			ob, err = nodeToSingBoxOutbound(n)
+			if err != nil {
+				continue
+			}
+		}
+		ob["tag"] = "proxy"
+		data, err := json.Marshal(ob)
+		if err != nil {
+			continue
+		}
+		if string(data) == string(current) {
+			return n.ID
+		}
+	}
+	return ""
 }
 
 func orDefault(s, def string) string {

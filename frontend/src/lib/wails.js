@@ -23,6 +23,7 @@ export const api = {
 
 // Settings
 GetSettings: () => call('GetSettings'),
+SaveSettings: (s) => call('SaveSettings', s),
 GetConfigFiles: () => call('GetConfigFiles'),
 SelectConfigFile: (name) => call('SelectConfigFile', name),
 OpenConfigsDir: () => call('OpenConfigsDir'),
@@ -30,6 +31,7 @@ OpenConfigsDir: () => call('OpenConfigsDir'),
   RemoveSubscription: (url) => call('RemoveSubscription', url),
   RefreshSubscription: (url, groupID) => call('RefreshSubscription', url, groupID),
   GetConfigPreview: () => call('GetConfigPreview'),
+  GetAppliedNodeID: () => call('GetAppliedNodeID'),
 
   // TUN
   EnableTun: () => call('EnableTun'),
@@ -61,7 +63,21 @@ let mockNodes = [
   { id: '4', name: '美国 trojan', protocol: 'trojan', address: 'us1.example.com', port: 443, sub_url: '' },
   { id: '5', name: 'TUIC v5 SG', protocol: 'tuic', address: 'sg2.example.com', port: 8443, sub_url: 'https://sub.example.com/token' },
 ]
-let mockSettings = { config_path: 'C:\\Users\\user\\singbox\\config.json', subscriptions: ['https://sub.example.com/token'] }
+let mockSettings = {
+  config_path: 'C:\\Users\\user\\singbox\\config.json',
+  subscriptions: ['https://sub.example.com/token'],
+  proxy_listen: '127.0.0.1',
+  proxy_port: 2080,
+  exit_disable_proxy: true,
+  tun_stack: 'gvisor',
+  tun_mtu: 9000,
+  tun_strict_route: true,
+  sub_user_agent: 'clash.meta',
+  sub_timeout_sec: 30,
+  log_max_lines: 500,
+  poll_interval_ms: 2000,
+}
+let mockAppliedNodeId = '2'
 let mockGroups = [{ id: 'default', name: '默认', is_default: true }]
 let mockStatus = { running: false, pid: 0 }
 let mockLog = ['[程序启动] SingBox GUI 已就绪']
@@ -92,7 +108,7 @@ async function mockCall(method, ...args) {
     case 'FetchSubscription': mockNodes.push({ id: Date.now().toString(), name: '新订阅节点', protocol: 'vmess', address: 'new.example.com', port: 443, sub_url: args[0] }); return 1
     case 'ClearNodes': mockNodes = []; return null
     case 'DeleteNode': mockNodes = mockNodes.filter(n => n.id !== args[0]); return null
-    case 'ApplyNode': return null
+    case 'ApplyNode': mockAppliedNodeId = args[0]; return null
     case 'ExportNodeURI': {
       const n = mockNodes.find(x => x.id === args[0])
       return n ? `${n.protocol}://${n.address}:${n.port}#${encodeURIComponent(n.name)}` : ''
@@ -108,6 +124,8 @@ async function mockCall(method, ...args) {
       return null
     }
 case 'GetSettings': return { ...mockSettings }
+case 'SaveSettings': mockSettings = { ...mockSettings, ...args[0] }; return null
+case 'GetAppliedNodeID': return mockAppliedNodeId
 case 'GetConfigFiles': return ['config.example.json']
 case 'SelectConfigFile': mockSettings.config_path = 'configs\\' + (args[0] || ''); return mockSettings.config_path
 case 'OpenConfigsDir': return null

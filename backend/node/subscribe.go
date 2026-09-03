@@ -13,13 +13,20 @@ import (
 )
 
 // FetchSubscription fetches and parses a subscription URL.
-func FetchSubscription(rawURL string) ([]Node, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+// userAgent / timeoutSec 由应用设置提供（默认 clash.meta / 30s）。
+func FetchSubscription(rawURL, userAgent string, timeoutSec int) ([]Node, error) {
+	if userAgent == "" {
+		userAgent = "clash.meta"
+	}
+	if timeoutSec <= 0 {
+		timeoutSec = 30
+	}
+	client := &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
 	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "clash.meta")
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -50,13 +57,13 @@ func FetchSubscription(rawURL string) ([]Node, error) {
 
 // singboxOutbound: typed view of a sing-box outbound (used to build editable Node configs)
 type singboxOutbound struct {
-	Type       string      `json:"type"`
-	Tag        string      `json:"tag"`
-	Server     string      `json:"server"`
-	ServerPort int         `json:"server_port"`
-	UUID       string      `json:"uuid,omitempty"`
-	Password   string      `json:"password,omitempty"`
-	Method     string      `json:"method,omitempty"`
+	Type       string `json:"type"`
+	Tag        string `json:"tag"`
+	Server     string `json:"server"`
+	ServerPort int    `json:"server_port"`
+	UUID       string `json:"uuid,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Method     string `json:"method,omitempty"`
 
 	// VMess
 	AlterID  interface{} `json:"alter_id,omitempty"`
@@ -70,16 +77,16 @@ type singboxOutbound struct {
 	PluginOpts string `json:"plugin_opts,omitempty"`
 
 	// Hysteria2 / TUIC / Hysteria v1
-	UpMbps            int    `json:"up_mbps,omitempty"`
-	DownMbps          int    `json:"down_mbps,omitempty"`
-	AuthStr           string `json:"auth_str,omitempty"`
+	UpMbps            int         `json:"up_mbps,omitempty"`
+	DownMbps          int         `json:"down_mbps,omitempty"`
+	AuthStr           string      `json:"auth_str,omitempty"`
 	Obfs              interface{} `json:"obfs,omitempty"` // v1: string; v2: object
-	CongestionControl string `json:"congestion_control,omitempty"`
-	UDPRelayMode      string `json:"udp_relay_mode,omitempty"`
+	CongestionControl string      `json:"congestion_control,omitempty"`
+	UDPRelayMode      string      `json:"udp_relay_mode,omitempty"`
 
 	// Socks / HTTP
-	Version  string `json:"version,omitempty"`
-	Username string `json:"username,omitempty"`
+	Version  string      `json:"version,omitempty"`
+	Username string      `json:"username,omitempty"`
 	TLS      *singboxTLS `json:"tls,omitempty"`
 
 	// Transport block (vmess/vless/trojan)
@@ -323,13 +330,13 @@ func parseSingBoxJSON(content string) ([]Node, error) {
 			n.Hysteria = cfg
 		case "hysteria2":
 			cfg := &Hysteria2Config{
-				Password: ob.Password,
-				SNI:      ob.TLS.sni(),
-				Insecure: ob.TLS.insecure(),
-				ALPN:     ob.TLS.alpn(),
+				Password:  ob.Password,
+				SNI:       ob.TLS.sni(),
+				Insecure:  ob.TLS.insecure(),
+				ALPN:      ob.TLS.alpn(),
 				ECHConfig: ob.TLS.echConfig(),
-				UpMbps:   ob.UpMbps,
-				DownMbps: ob.DownMbps,
+				UpMbps:    ob.UpMbps,
+				DownMbps:  ob.DownMbps,
 			}
 			if ob.Obfs != nil {
 				if m, ok := ob.Obfs.(map[string]interface{}); ok {
@@ -530,7 +537,7 @@ func clashProxyToNode(p map[string]interface{}) (*Node, error) {
 			ALPN:     clashStrSlice(p["alpn"]),
 			UpMbps:   clashFirstInt(p, "up", "upmbps"),
 			DownMbps: clashFirstInt(p, "down", "downmbps"),
-			Obfs: obfs, ObfsPassword: obfsPass,
+			Obfs:     obfs, ObfsPassword: obfsPass,
 		}
 
 	case "hysteria", "hysteria1":
@@ -571,7 +578,7 @@ func clashProxyToNode(p map[string]interface{}) (*Node, error) {
 		tls, _ := p["tls"].(bool)
 		n.Protocol = "socks"
 		n.Socks = &SocksConfig{
-			Version: "5",
+			Version:  "5",
 			Username: username, Password: password,
 		}
 		if tls {
@@ -673,11 +680,12 @@ func clashProxyToNode(p map[string]interface{}) (*Node, error) {
 
 // clashBuildTransport parses Clash proxy map transport opts into a TransportConfig.
 // Clash uses per-network "*-opts" blocks:
-//   ws-opts:        { path, headers: {Host}, max-early-data, early-data-header-name }
-//   h2-opts:        { host: [], path }
-//   grpc-opts:      { grpc-service-name }
-//   httpupgrade-opts: { path, host }
-//   xhttp-opts:     { path, host: [], mode }
+//
+//	ws-opts:        { path, headers: {Host}, max-early-data, early-data-header-name }
+//	h2-opts:        { host: [], path }
+//	grpc-opts:      { grpc-service-name }
+//	httpupgrade-opts: { path, host }
+//	xhttp-opts:     { path, host: [], mode }
 func clashBuildTransport(network string, p map[string]interface{}) *TransportConfig {
 	if network == "" {
 		return nil

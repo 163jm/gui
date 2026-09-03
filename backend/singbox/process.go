@@ -23,8 +23,24 @@ type Process struct {
 	maxLog int
 }
 
-func NewProcess() *Process {
-	return &Process{maxLog: 500}
+func NewProcess(maxLog int) *Process {
+	if maxLog <= 0 {
+		maxLog = 500
+	}
+	return &Process{maxLog: maxLog}
+}
+
+// SetMaxLog 更新日志保留行数并按需裁剪已有日志。
+func (p *Process) SetMaxLog(maxLog int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if maxLog <= 0 {
+		maxLog = 500
+	}
+	p.maxLog = maxLog
+	if len(p.log) > p.maxLog {
+		p.log = p.log[len(p.log)-p.maxLog:]
+	}
 }
 
 func (p *Process) Start(binPath, cfgPath string) error {

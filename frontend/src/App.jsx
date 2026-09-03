@@ -6,6 +6,7 @@ import ImportModal from './components/ImportModal'
 import LogPanel from './components/LogPanel'
 import ConfigBar from './components/ConfigBar'
 import BottomBar from './components/BottomBar'
+import SettingsModal from './components/SettingsModal'
 import Toast from './components/Toast'
 import './App.css'
 
@@ -21,6 +22,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('nodes') // nodes | log
   const [showSubModal, setShowSubModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [appliedId, setAppliedId] = useState('')
+  const [pollMs, setPollMs] = useState(2000)
   const [toast, setToast] = useState(null)
   const [loading, setLoading] = useState(false)
   const pollRef = useRef(null)
@@ -51,6 +55,14 @@ export default function App() {
     try {
       const s = await api.GetSettings()
       setSettings(s || { config_path: '', subscriptions: [] })
+      if (s?.poll_interval_ms) setPollMs(s.poll_interval_ms)
+    } catch (e) { /* ignore */ }
+  }, [])
+
+  const loadApplied = useCallback(async () => {
+    try {
+      const id = await api.GetAppliedNodeID()
+      setAppliedId(id || '')
     } catch (e) { /* ignore */ }
   }, [])
 
@@ -82,18 +94,20 @@ export default function App() {
     loadNodes()
     loadGroups()
     loadSettings()
+    loadApplied()
     loadConfigFiles()
+  }, [loadNodes, loadGroups, loadSettings, loadApplied, loadConfigFiles])
 
-    // poll singbox status
+  // 状态轮询（间隔来自设置，可在设置页修改后即时生效）
+  useEffect(() => {
     pollRef.current = setInterval(async () => {
       try {
         const s = await api.GetSingBoxStatus()
         setSingboxStatus(s || { running: false })
       } catch (e) { /* ignore */ }
-    }, 2000)
-
+    }, pollMs)
     return () => clearInterval(pollRef.current)
-  }, [loadNodes, loadGroups, loadSettings])
+  }, [pollMs])
 
 // ─── Actions ──────────────────────────────────────────────────────────────
 
@@ -140,9 +154,21 @@ export default function App() {
   const handleApplyNode = async (id) => {
     try {
       await api.ApplyNode(id)
+      setAppliedId(id)
       showToast('节点已应用到配置文件', 'success')
     } catch (e) {
       showToast('应用节点失败: ' + e, 'error')
+    }
+  }
+
+  const handleSaveSettings = async (s) => {
+    try {
+      await api.SaveSettings(s)
+      await loadSettings()
+      setShowSettingsModal(false)
+      showToast('设置已保存', 'success')
+    } catch (e) {
+      showToast('保存设置失败: ' + (e?.message || e), 'error')
     }
   }
 
@@ -178,7 +204,7 @@ export default function App() {
       if (on) {
         await api.EnableSystemProxy()
         setProxyEnabled(true)
-        showToast('已启用系统代理 (127.0.0.1:2080)', 'success')
+        showToast(`已启用系统代理 (${settings.proxy_listen || '127.0.0.1'}:${settings.proxy_port || 2080})`, 'success')
       } else {
         await api.DisableSystemProxy()
         setProxyEnabled(false)
@@ -222,6 +248,9 @@ export default function App() {
             运行日志
             {singboxStatus.running && <span className="tab-badge" />}
           </button>
+          <button className="tab-btn" onClick={() => setShowSettingsModal(true)} title="设置">
+            ⚙ 设置
+          </button>
         </div>
         <div className="titlebar-status">
           {singboxStatus.running
@@ -255,11 +284,12 @@ nodeCount={nodes.length}
             nodes={nodes}
             groups={groups}
             activeGroupId={activeGroupId}
+            appliedId={appliedId}
             onSelectGroup={setActiveGroupId}
             onGroupsChanged={async () => { await loadGroups(); await loadNodes() }}
             onApply={handleApplyNode}
             onDelete={handleDeleteNode}
-            onRefresh={loadNodes}
+            onRefresh={async () => { await loadNodes(); await loadApplied() }}
           />
         )}
         {activeTab === 'log' && (
@@ -292,6 +322,13 @@ nodeCount={nodes.length}
           onFetch={handleFetchSub}
           onClose={() => setShowSubModal(false)}
           loading={loading}
+        />
+      )}
+      {showSettingsModal && (
+        <SettingsModal
+          settings={settings}
+          onSave={handleSaveSettings}
+          onClose={() => setShowSettingsModal(false)}
         />
       )}
 

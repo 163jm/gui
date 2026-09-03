@@ -72,7 +72,7 @@ function getNodeMeta(node) {
   return { transport, tls, reality, ech, utls }
 }
 
-export default function NodeList({ nodes, groups, activeGroupId, onSelectGroup, onGroupsChanged, onApply, onDelete, onRefresh }) {
+export default function NodeList({ nodes, groups, activeGroupId, appliedId, onSelectGroup, onGroupsChanged, onApply, onDelete, onRefresh }) {
   const [nodeMenu, setNodeMenu] = useState(null)      // 节点右键菜单
   const [groupMenu, setGroupMenu] = useState(null)    // 分组右键菜单
   const [selectedId, setSelectedId] = useState(null)
@@ -234,6 +234,7 @@ export default function NodeList({ nodes, groups, activeGroupId, onSelectGroup, 
             <NodeRow
               key={node.id}
               node={node}
+              applied={node.id === appliedId}
               selected={selectedId === node.id}
               onClick={() => { setSelectedId(node.id); closeMenus() }}
               onContextMenu={(e) => {
@@ -322,21 +323,24 @@ export default function NodeList({ nodes, groups, activeGroupId, onSelectGroup, 
   )
 }
 
-function NodeRow({ node, selected, onClick, onContextMenu }) {
+function NodeRow({ node, applied, selected, onClick, onContextMenu }) {
   const color = PROTOCOL_COLORS[node.protocol] || '#9ea3c0'
   const label = PROTOCOL_LABELS[node.protocol] || node.protocol?.toUpperCase()
   const meta = getNodeMeta(node)
 
   return (
     <div
-      className={`node-row${selected ? ' selected' : ''}`}
+      className={`node-row${applied ? ' applied' : ''}${selected ? ' selected' : ''}`}
       onClick={onClick}
       onContextMenu={onContextMenu}
     >
       <span className="node-proto-badge" style={{ color, borderColor: color + '40', background: color + '12' }}>
         {label}
       </span>
-      <span className="node-name">{node.name || '未命名节点'}</span>
+      <span className="node-name">
+        {node.name || '未命名节点'}
+        {applied && <span className="applied-chip" title="此节点已应用到配置文件">已应用</span>}
+      </span>
       {/* 传输层 / TLS 标识(参考 v2rayN 的 流类型/安全 列) */}
       {meta.transport && <span className="meta-chip">{TRANSPORT_LABELS[meta.transport] || meta.transport}</span>}
       {meta.reality ? (
