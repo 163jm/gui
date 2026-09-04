@@ -14,7 +14,25 @@
   flex-direction: column;
   gap: 14px;
   padding: 16px;
-  max-width: 640px;
+}
+
+.settings-panel-body .settings-row {
+  flex-wrap: wrap;
+}
+
+.settings-panel-body .settings-input {
+  flex: 1;
+  min-width: 200px;
+  max-width: 360px;
+}
+
+.settings-panel-body select.settings-input {
+  max-width: 400px;
+}
+
+.settings-panel-body .settings-hint {
+  flex: 1;
+  min-width: 160px;
 }
 
 .settings-panel-footer {
