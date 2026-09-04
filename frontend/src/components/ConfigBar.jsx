@@ -7,13 +7,15 @@ function basename(p) {
   return p.split(/[\\/]/).pop() || ''
 }
 
-export default function ConfigBar({ configPath, configFiles = [], onSelectConfig, onRefreshConfigs, onOpenConfigsDir, onImport, onSubscription, onClear, nodeCount, loading }) {
+export default function ConfigBar({ core = 'sing-box', configPath, configFiles = [], onSelectConfig, onRefreshConfigs, onOpenConfigsDir, onImport, onSubscription, onClear, nodeCount, loading }) {
   const selectedName = basename(configPath)
   const value = configFiles.includes(selectedName) ? selectedName : ''
+  const isMihomo = core === 'mihomo'
+  const extHint = isMihomo ? 'yaml' : 'json'
 
   return (
     <div className="config-bar">
-      <div className="config-path-area" title={`配置文件来自程序同目录的 configs 文件夹${configPath ? '\n当前: ' + configPath : ''}`}>
+      <div className="config-path-area" title={`配置文件来自程序同目录的 configs 文件夹（当前内核: ${core}）${configPath ? '\n当前: ' + configPath : ''}`}>
         <span className="config-path-icon">⚙</span>
         <select
           className={`config-select${value ? ' has-value' : ''}`}
@@ -22,8 +24,8 @@ export default function ConfigBar({ configPath, configFiles = [], onSelectConfig
         >
           <option value="">
             {configFiles.length > 0
-              ? (value ? value : '— 选择 sing-box 配置文件 —')
-              : 'configs 目录为空，请放入 json 配置…'}
+              ? (value ? value : `— 选择 ${core} 配置文件 —`)
+              : `configs 目录为空，请放入 ${extHint} 配置…`}
           </option>
           {configFiles.map(f => (
             <option key={f} value={f}>{f}</option>

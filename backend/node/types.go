@@ -17,6 +17,11 @@ type Node struct {
 	// transport field is preserved verbatim and re-applied as-is.
 	RawOutbound map[string]interface{} `json:"raw_outbound,omitempty"`
 
+	// RawClashProxy stores the original Clash/mihomo proxies entry (YAML map)
+	// for nodes imported from Clash YAML, enabling lossless re-apply when
+	// writing mihomo configs.
+	RawClashProxy map[string]interface{} `json:"raw_clash_proxy,omitempty"`
+
 	VMess     *VMessConfig      `json:"vmess,omitempty"`
 	VLESS     *VLESSConfig      `json:"vless,omitempty"`
 	Trojan    *TrojanConfig     `json:"trojan,omitempty"`

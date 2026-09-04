@@ -64,6 +64,7 @@ let mockNodes = [
   { id: '5', name: 'TUIC v5 SG', protocol: 'tuic', address: 'sg2.example.com', port: 8443, sub_url: 'https://sub.example.com/token' },
 ]
 let mockSettings = {
+  core: 'sing-box',
   config_path: 'C:\\Users\\user\\singbox\\config.json',
   subscriptions: ['https://sub.example.com/token'],
   proxy_listen: '127.0.0.1',
@@ -80,7 +81,7 @@ let mockSettings = {
 let mockAppliedNodeId = '2'
 let mockGroups = [{ id: 'default', name: '默认', is_default: true }]
 let mockStatus = { running: false, pid: 0 }
-let mockLog = ['[程序启动] SingBox GUI 已就绪']
+let mockLog = ['[程序启动] SM GUI 已就绪']
 
 async function mockCall(method, ...args) {
   await new Promise(r => setTimeout(r, 120))
@@ -126,7 +127,7 @@ async function mockCall(method, ...args) {
 case 'GetSettings': return { ...mockSettings }
 case 'SaveSettings': mockSettings = { ...mockSettings, ...args[0] }; return null
 case 'GetAppliedNodeID': return mockAppliedNodeId
-case 'GetConfigFiles': return ['config.example.json']
+case 'GetConfigFiles': return mockSettings.core === 'mihomo' ? ['config.example.yaml'] : ['config.example.json']
 case 'SelectConfigFile': mockSettings.config_path = 'configs\\' + (args[0] || ''); return mockSettings.config_path
 case 'OpenConfigsDir': return null
     case 'GetSubscriptions': return [...mockSettings.subscriptions]

@@ -4,14 +4,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+)
+
+// 支持的内核。
+const (
+	CoreSingBox = "sing-box"
+	CoreMihomo  = "mihomo"
 )
 
 // Settings 持久化设置。新增字段必须同时在 applyDefaults 里给默认值，
 // 否则旧 settings.json 升级后会出现零值。
 type Settings struct {
-	ConfigPath    string   `json:"config_path"`
+	// 内核：sing-box | mihomo
+	Core string `json:"core"`
+
+	// 旧版字段：保留并同步为“当前内核选中的配置文件”，前端直接读取它回显。
+	ConfigPath string `json:"config_path"`
+
+	// 两个内核各自记忆的配置文件路径（切换内核时互不丢失）。
+	ConfigPathSingBox string `json:"config_path_singbox,omitempty"`
+	ConfigPathMihomo  string `json:"config_path_mihomo,omitempty"`
+
 	Subscriptions []string `json:"subscriptions"`
 
 	// 当前应用的节点 ID（切配置文件后据此重新应用）
@@ -44,6 +60,7 @@ type Settings struct {
 // Defaults 返回一份全新默认设置。
 func Defaults() Settings {
 	return Settings{
+		Core:             CoreSingBox,
 		Subscriptions:    []string{},
 		ProxyListen:      "127.0.0.1",
 		ProxyPort:        2080,
@@ -64,6 +81,9 @@ func (s *Settings) Normalize() { s.applyDefaults() }
 // applyDefaults 为零值字段补默认值（兼容旧版 settings.json）。
 func (s *Settings) applyDefaults() {
 	def := Defaults()
+	if s.Core == "" {
+		s.Core = def.Core
+	}
 	if s.Subscriptions == nil {
 		s.Subscriptions = []string{}
 	}
@@ -102,8 +122,31 @@ func (s *Settings) applyDefaults() {
 	}
 }
 
+// ActiveConfigPath 返回当前内核记忆的配置文件路径。
+func (s *Settings) ActiveConfigPath() string {
+	if s.Core == CoreMihomo {
+		return s.ConfigPathMihomo
+	}
+	return s.ConfigPathSingBox
+}
+
+// SetCoreConfigPath 记录指定内核的配置文件路径（同时同步旧字段 ConfigPath）。
+func (s *Settings) SetCoreConfigPath(core, path string) {
+	if core == CoreMihomo {
+		s.ConfigPathMihomo = path
+	} else {
+		s.ConfigPathSingBox = path
+	}
+	s.ConfigPath = path
+}
+
 // Validate 校验设置合法性（保存前调用）。
 func (s *Settings) Validate() error {
+	switch s.Core {
+	case CoreSingBox, CoreMihomo:
+	default:
+		return fmt.Errorf("内核必须是 sing-box / mihomo")
+	}
 	if strings.TrimSpace(s.ProxyListen) == "" {
 		return fmt.Errorf("监听地址不能为空")
 	}
@@ -168,6 +211,15 @@ func (m *Manager) Load() error {
 	m.Settings = alias.Settings
 	m.Settings.exitDisableProxySet = alias.ExitDisableProxy != nil
 	m.Settings.tunStrictRouteSet = alias.TunStrictRoute != nil
+	// 旧版 settings.json 迁移：只有 config_path，按扩展名归入对应内核的记忆路径。
+	if m.Settings.ConfigPathSingBox == "" && m.Settings.ConfigPathMihomo == "" && m.Settings.ConfigPath != "" {
+		ext := strings.ToLower(filepath.Ext(m.Settings.ConfigPath))
+		if ext == ".yaml" || ext == ".yml" {
+			m.Settings.ConfigPathMihomo = m.Settings.ConfigPath
+		} else {
+			m.Settings.ConfigPathSingBox = m.Settings.ConfigPath
+		}
+	}
 	m.Settings.applyDefaults()
 	return nil
 }

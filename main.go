@@ -16,7 +16,7 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:         "SingBox GUI",
+		Title:         "SM GUI",
 		Width:         900,
 		Height:        650,
 		MinWidth:      750,

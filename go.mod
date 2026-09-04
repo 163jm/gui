@@ -1,4 +1,4 @@
-module singbox-gui
+module sm-gui
 
 go 1.25.0
 

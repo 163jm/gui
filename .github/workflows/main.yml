@@ -40,7 +40,7 @@ jobs:
         shell: pwsh
         run: |
           $apiUrl = "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-          $headers = @{ "User-Agent" = "singbox-gui-builder" }
+          $headers = @{ "User-Agent" = "sm-gui-builder" }
           $release = Invoke-RestMethod -Uri $apiUrl -Headers $headers
           $tag = $release.tag_name
           Write-Host "Latest sing-box version: $tag"
@@ -61,16 +61,16 @@ jobs:
           Write-Host "sing-box.exe downloaded to bin\"
 
       - name: Build Wails app
-        run: wails build -platform windows/amd64 -ldflags "-H windowsgui" -o singbox-gui.exe
+        run: wails build -platform windows/amd64 -ldflags "-H windowsgui" -o sm-gui.exe
 
       - name: Package release
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "release\singbox-gui"
-          Copy-Item "build\bin\singbox-gui.exe" "release\singbox-gui\"
-          Copy-Item -Recurse "bin" "release\singbox-gui\bin"
-          New-Item -ItemType Directory -Force -Path "release\singbox-gui\data"
-          Copy-Item "README.md" "release\singbox-gui\" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "release\sm-gui"
+          Copy-Item "build\bin\sm-gui.exe" "release\sm-gui\"
+          Copy-Item -Recurse "bin" "release\sm-gui\bin"
+          New-Item -ItemType Directory -Force -Path "release\sm-gui\data"
+          Copy-Item "README.md" "release\sm-gui\" -ErrorAction SilentlyContinue
 
           # Create example config
           $exampleConfig = @'
@@ -102,13 +102,13 @@ jobs:
             }
           }
           '@
-          $exampleConfig | Out-File -FilePath "release\singbox-gui\config.example.json" -Encoding UTF8
+          $exampleConfig | Out-File -FilePath "release\sm-gui\config.example.json" -Encoding UTF8
 
-          Compress-Archive -Path "release\singbox-gui" -DestinationPath "singbox-gui-windows-amd64.zip"
+          Compress-Archive -Path "release\sm-gui" -DestinationPath "sm-gui-windows-amd64.zip"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: test
           name: test
-          files: singbox-gui-windows-amd64.zip
+          files: sm-gui-windows-amd64.zip

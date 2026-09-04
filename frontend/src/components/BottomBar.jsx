@@ -2,7 +2,7 @@ import React from 'react'
 import './BottomBar.css'
 
 export default function BottomBar({
-  tunEnabled, proxyEnabled, singboxRunning, proxyAddr,
+  tunEnabled, proxyEnabled, singboxRunning, proxyAddr, coreName = 'sing-box',
   onToggleTun, onToggleProxy, onToggleSingbox
 }) {
   return (
@@ -31,7 +31,7 @@ export default function BottomBar({
         enabled={singboxRunning}
         onToggle={onToggleSingbox}
         activeColor="var(--yellow)"
-        desc={singboxRunning ? 'sing-box 运行中' : '点击启动 sing-box'}
+        desc={singboxRunning ? `${coreName} 运行中` : `点击启动 ${coreName}`}
         isPrimary
       />
     </div>

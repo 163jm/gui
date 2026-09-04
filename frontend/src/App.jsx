@@ -29,6 +29,9 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const pollRef = useRef(null)
 
+  // 当前内核名称（用于 UI 文案）
+  const coreName = settings.core === 'mihomo' ? 'mihomo' : 'sing-box'
+
   const showToast = useCallback((msg, type = 'info') => {
     setToast({ msg, type, id: Date.now() })
   }, [])
@@ -164,24 +167,36 @@ showToast('切换配置失败: ' + (e?.message || e), 'error')
 
   const handleSaveSettings = async (s) => {
     try {
+      const coreChanged = s.core !== settings.core
       await api.SaveSettings(s)
+      // 内核切换后后端会把 config_path 切到新内核记忆的配置文件（可能为空），
+      // 所以以后端最新设置为准
+      const fresh = await api.GetSettings()
       // 重启受影响的开关，让设置即时生效：
       // 核心在跑则先停 → 重写 TUN/系统代理配置 → 再拉起核心
       const wasRunning = singboxStatus.running
       if (wasRunning) { await api.StopSingBox().catch(() => {}) }
-      if (tunEnabled) {
-        await api.DisableTun()
-        await api.EnableTun()
+      // 切换内核后可能尚未选择新内核的配置文件，跳过重建
+      const hasConfig = !!fresh.config_path
+      if (hasConfig) {
+        if (tunEnabled) {
+          await api.DisableTun()
+          await api.EnableTun()
+        }
+        if (proxyEnabled) {
+          await api.DisableSystemProxy()
+          await api.EnableSystemProxy()
+        }
       }
-      if (proxyEnabled) {
-        await api.DisableSystemProxy()
-        await api.EnableSystemProxy()
-      }
-      if (wasRunning) { await api.StartSingBox() }
+      if (wasRunning && hasConfig) { await api.StartSingBox() }
       await loadSettings()
       await loadApplied()
+      await loadConfigFiles()
       setShowSettingsModal(false)
-      showToast(wasRunning ? '设置已保存，核心已重启生效' : '设置已保存', 'success')
+      showToast(wasRunning && hasConfig ? '设置已保存，核心已重启生效' : '设置已保存', 'success')
+      if (coreChanged) {
+        showToast(`已切换内核: ${s.core === 'mihomo' ? 'mihomo' : 'sing-box'}${fresh.config_path ? '' : '（请先选择该内核的配置文件）'}`, 'info')
+      }
     } catch (e) {
       showToast('保存设置失败: ' + (e?.message || e), 'error')
     }
@@ -234,13 +249,13 @@ showToast('切换配置失败: ' + (e?.message || e), 'error')
     try {
       if (on) {
         await api.StartSingBox()
-        showToast('sing-box 已启动', 'success')
+        showToast(`${coreName} 已启动`, 'success')
       } else {
         await api.StopSingBox()
-        showToast('sing-box 已停止', 'info')
+        showToast(`${coreName} 已停止`, 'info')
       }
     } catch (e) {
-      showToast('sing-box 操作失败: ' + e, 'error')
+      showToast(`${coreName} 操作失败: ` + e, 'error')
     }
   }
 
@@ -279,6 +294,7 @@ showToast('切换配置失败: ' + (e?.message || e), 'error')
 
 {/* Config bar */}
 <ConfigBar
+core={settings.core}
 configPath={settings.config_path}
 configFiles={configFiles}
 onSelectConfig={handleSelectConfig}
@@ -317,6 +333,7 @@ nodeCount={nodes.length}
         proxyEnabled={proxyEnabled}
         singboxRunning={singboxStatus.running}
         proxyAddr={`127.0.0.1:${settings.proxy_port || 2080}`}
+        coreName={coreName}
         onToggleTun={handleToggleTun}
         onToggleProxy={handleToggleProxy}
         onToggleSingbox={handleToggleSingbox}

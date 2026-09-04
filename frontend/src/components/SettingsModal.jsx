@@ -2,6 +2,11 @@ import React, { useState, useEffect } from 'react'
 import './SettingsModal.css'
 
 // 设置项分组定义
+const CORES = [
+  { value: 'sing-box', label: 'sing-box（配置为 JSON）' },
+  { value: 'mihomo', label: 'mihomo / Clash.Meta（配置为 YAML）' },
+]
+
 const TUN_STACKS = [
   { value: 'gvisor', label: 'gvisor（默认，兼容性好）' },
   { value: 'system', label: 'system（性能好，需内核支持）' },
@@ -13,6 +18,7 @@ const LISTEN_ADDRS = ['127.0.0.1', '0.0.0.0', '::']
 
 export default function SettingsModal({ settings, onSave, onClose }) {
   const [form, setForm] = useState(() => ({
+    core: 'sing-box',
     proxy_listen: '127.0.0.1',
     proxy_port: 2080,
     exit_disable_proxy: true,
@@ -44,6 +50,7 @@ export default function SettingsModal({ settings, onSave, onClose }) {
   const handleReset = () => {
     setForm(f => ({
       ...f,
+      core: 'sing-box',
       proxy_listen: '127.0.0.1',
       proxy_port: 2080,
       exit_disable_proxy: true,
@@ -95,6 +102,24 @@ export default function SettingsModal({ settings, onSave, onClose }) {
         </div>
 
         <div className="modal-body settings-body">
+          {/* ── 内核 ── */}
+          <div className="settings-section">
+            <div className="settings-section-title">内核</div>
+            <div className="settings-row">
+              <label className="settings-label">代理内核</label>
+              <select
+                className="modal-input settings-input"
+                value={form.core}
+                onChange={e => set('core', e.target.value)}
+              >
+                {CORES.map(c => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+              <span className="settings-hint">切换后使用各自记忆的配置文件（configs 目录 json / yaml）</span>
+            </div>
+          </div>
+
           {/* ── 系统代理 ── */}
           <div className="settings-section">
             <div className="settings-section-title">系统代理</div>
@@ -169,7 +194,7 @@ export default function SettingsModal({ settings, onSave, onClose }) {
                 checked={!!form.tun_strict_route}
                 onChange={e => set('tun_strict_route', e.target.checked)}
               />
-              <span className="settings-hint">严格路由，防止流量绕过 TUN</span>
+              <span className="settings-hint">严格路由，防止流量绕过 TUN（仅 sing-box 生效，mihomo 无此选项）</span>
             </div>
           </div>
 
@@ -229,7 +254,7 @@ export default function SettingsModal({ settings, onSave, onClose }) {
           </div>
 
           <div className="settings-note">
-            提示：代理端口 / TUN 相关设置在下次「开启系统代理 / 开启 TUN」时生效；
+            提示：切换内核 / 代理端口 / TUN 相关设置在下次「开启系统代理 / 开启 TUN」或核心重启时生效；
             日志行数与轮询间隔保存后立即生效。
           </div>
         </div>

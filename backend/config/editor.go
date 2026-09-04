@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"singbox-gui/backend/node"
+	"sm-gui/backend/node"
 )
 
 func loadJSON(path string) (map[string]interface{}, error) {
@@ -46,7 +46,17 @@ func getOutbounds(cfg map[string]interface{}) []interface{} {
 
 // ─── Apply Node ───────────────────────────────────────────────────────────────
 
-func ApplyNodeToConfig(cfgPath string, n node.Node) error {
+// ApplyNodeToConfig 按内核把节点写入配置文件。
+// sing-box：替换 tag 为 "proxy" 的 outbound；mihomo：替换 name 为 "proxy" 的 proxies 条目。
+func ApplyNodeToConfig(core, cfgPath string, n node.Node) error {
+	if core == CoreMihomo {
+		return ApplyNodeToMihomoConfig(cfgPath, n)
+	}
+	return applyNodeToSingBoxConfig(cfgPath, n)
+}
+
+// applyNodeToSingBoxConfig replaces the "proxy" outbound in a sing-box JSON config.
+func applyNodeToSingBoxConfig(cfgPath string, n node.Node) error {
 	cfg, err := loadJSON(cfgPath)
 	if err != nil {
 		return err
@@ -550,6 +560,14 @@ func buildRealityTLS(sni, publicKey, shortID, fingerprint string) map[string]int
 
 // ─── TUN inbound ─────────────────────────────────────────────────────────────
 
+// SetTun 按内核开关 TUN。mihomo 无 strict_route，该参数对 mihomo 被忽略。
+func SetTun(core, cfgPath string, enable bool, stack string, mtu int, strictRoute bool) error {
+	if core == CoreMihomo {
+		return SetTunMihomo(cfgPath, enable, stack, mtu)
+	}
+	return setTunSingBox(cfgPath, enable, stack, mtu, strictRoute)
+}
+
 // buildTunInbound 根据用户设置构建 tun inbound。
 // address 与 interface_name 保持固定（修改会导致路由残留风险，不暴露为设置项）。
 func buildTunInbound(stack string, mtu int, strictRoute bool) map[string]interface{} {
@@ -571,7 +589,8 @@ func buildTunInbound(stack string, mtu int, strictRoute bool) map[string]interfa
 	}
 }
 
-func SetTun(cfgPath string, enable bool, stack string, mtu int, strictRoute bool) error {
+// setTunSingBox 开关 sing-box 配置中的 tun inbound。
+func setTunSingBox(cfgPath string, enable bool, stack string, mtu int, strictRoute bool) error {
 	cfg, err := loadJSON(cfgPath)
 	if err != nil {
 		return err
@@ -593,7 +612,15 @@ func SetTun(cfgPath string, enable bool, stack string, mtu int, strictRoute bool
 
 // ─── Mixed inbound ────────────────────────────────────────────────────────────
 
-func SetMixedInbound(cfgPath string, enable bool, listen string, port int) error {
+func SetMixedInbound(core, cfgPath string, enable bool, listen string, port int) error {
+	if core == CoreMihomo {
+		return SetMixedInboundMihomo(cfgPath, enable, listen, port)
+	}
+	return setMixedInboundSingBox(cfgPath, enable, listen, port)
+}
+
+// setMixedInboundSingBox 开关 sing-box 配置中的 mixed inbound。
+func setMixedInboundSingBox(cfgPath string, enable bool, listen string, port int) error {
 	if strings.TrimSpace(listen) == "" {
 		listen = "127.0.0.1"
 	}
@@ -626,8 +653,11 @@ func SetMixedInbound(cfgPath string, enable bool, listen string, port int) error
 
 // ─── Applied node detection ──────────────────────────────────────────────────
 
-// HasTunInbound 判断配置文件当前是否含 tun inbound（用于切换配置前探测 TUN 状态）。
-func HasTunInbound(cfgPath string) bool {
+// HasTunInbound 判断配置文件当前是否启用了 TUN（用于切换配置前探测 TUN 状态）。
+func HasTunInbound(core, cfgPath string) bool {
+	if core == CoreMihomo {
+		return HasTunMihomo(cfgPath)
+	}
 	cfg, err := loadJSON(cfgPath)
 	if err != nil {
 		return false
@@ -640,11 +670,18 @@ func HasTunInbound(cfgPath string) bool {
 	return false
 }
 
-// FindAppliedNodeID 读取配置文件，找出当前 "proxy" outbound 对应的节点 ID。
-// 比较方式：把配置中的 proxy outbound 与每个节点的
-// (RawOutbound 或 生成的 outbound) 规范化为 JSON 后逐一比对。
+// FindAppliedNodeID 找出配置文件中当前应用的节点 ID（按内核定位方式：
+// sing-box 为 tag "proxy" 的 outbound，mihomo 为 name "proxy" 的 proxies 条目）。
 // 找不到匹配返回 ""（例如配置被手工修改过）。
-func FindAppliedNodeID(cfgPath string, nodes []node.Node) string {
+func FindAppliedNodeID(core, cfgPath string, nodes []node.Node) string {
+	if core == CoreMihomo {
+		return FindAppliedNodeIDMihomo(cfgPath, nodes)
+	}
+	return findAppliedNodeIDSingBox(cfgPath, nodes)
+}
+
+// findAppliedNodeIDSingBox 读取 sing-box JSON 配置，找出当前 "proxy" outbound 对应的节点 ID。
+func findAppliedNodeIDSingBox(cfgPath string, nodes []node.Node) string {
 	cfg, err := loadJSON(cfgPath)
 	if err != nil {
 		return ""

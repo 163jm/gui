@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"singbox-gui/backend/config"
-	"singbox-gui/backend/node"
-	"singbox-gui/backend/singbox"
-	"singbox-gui/backend/sysproxy"
+	"sm-gui/backend/config"
+	"sm-gui/backend/node"
+	"sm-gui/backend/singbox"
+	"sm-gui/backend/sysproxy"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -50,8 +50,10 @@ func (a *App) startup(ctx context.Context) {
 	// init data dir
 	dataDir := getDataDir()
 	os.MkdirAll(dataDir, 0755)
-	// configs 目录(与 data 同级, 存放 sing-box 配置 json)
+	// configs 目录(与 data 同级, 存放内核配置文件: sing-box json / mihomo yaml)
 	os.MkdirAll(getConfigsDir(), 0755)
+	// run 目录(核心运行目录, 存放复制的配置文件与 mihomo geodata)
+	ensureRunDir()
 
 	// SQLite 节点存储
 	a.nodeStore = node.NewStore(filepath.Join(dataDir, "nodes.db"))
@@ -100,11 +102,76 @@ func ensureConfigsDir() {
 	os.MkdirAll(getConfigsDir(), 0755)
 }
 
-// GetConfigFiles lists *.json files in the configs directory (sorted by name).
-// The directory is created on demand.
+// ─── run 目录 ─────────────────────────────────────────────────────────────────
+// run 目录是核心进程的运行目录（位于程序根目录）：
+//   - 选择配置文件时，把 configs/ 中的源文件复制进来并改名为
+//     config.json（sing-box）或 config.yaml（mihomo）；
+//   - 启动内核时 sing-box 用 `run -D run`，mihomo 用 `-d run`
+//     （geodata 等数据文件也会落在 run 目录，切换配置时不会被清除）；
+//   - 每次切换配置文件都会清掉旧配置，保证 run 目录中只有当前内核的一个配置文件。
+
+func getRunDir() string {
+	return filepath.Join(filepath.Dir(getDataDir()), "run")
+}
+
+func ensureRunDir() {
+	os.MkdirAll(getRunDir(), 0755)
+}
+
+// runConfigName 返回 run 目录中当前内核配置文件的固定名。
+func runConfigName(core string) string {
+	if core == config.CoreMihomo {
+		return "config.yaml"
+	}
+	return "config.json"
+}
+
+func runConfigPath(core string) string {
+	return filepath.Join(getRunDir(), runConfigName(core))
+}
+
+// clearRunConfig 清除 run 目录中的旧配置文件（config.json/yaml/yml 及临时文件），
+// 保证 run 目录中只保留当前内核的一个配置文件；geodata 等数据文件不受影响。
+func clearRunConfig() {
+	ensureRunDir()
+	for _, name := range []string{
+		"config.json", "config.yaml", "config.yml",
+		"config.json.tmp", "config.yaml.tmp", "config.yml.tmp",
+	} {
+		os.Remove(filepath.Join(getRunDir(), name))
+	}
+}
+
+// syncRunConfig 把 configs 目录中选中的配置文件复制到 run 目录（先清除旧配置）。
+func syncRunConfig(core, srcPath string) error {
+	if srcPath == "" {
+		return fmt.Errorf("未选择配置文件")
+	}
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return fmt.Errorf("读取配置文件失败: %v", err)
+	}
+	clearRunConfig()
+	dst := runConfigPath(core)
+	if err := os.WriteFile(dst, data, 0644); err != nil {
+		return fmt.Errorf("写入 run 配置失败: %v", err)
+	}
+	return nil
+}
+
+// GetConfigFiles lists config files in the configs directory (sorted by name).
+// 按当前内核过滤扩展名：sing-box → .json；mihomo → .yaml/.yml。
 func (a *App) GetConfigFiles() []string {
 	return guardP("GetConfigFiles", func() []string {
 		ensureConfigsDir()
+		core := config.CoreSingBox
+		if a.cfgManager != nil {
+			core = a.cfgManager.Settings.Core
+		}
+		match := map[string]bool{".json": true}
+		if core == config.CoreMihomo {
+			match = map[string]bool{".yaml": true, ".yml": true}
+		}
 		entries, err := os.ReadDir(getConfigsDir())
 		if err != nil {
 			return []string{}
@@ -114,7 +181,7 @@ func (a *App) GetConfigFiles() []string {
 			if e.IsDir() {
 				continue
 			}
-			if strings.EqualFold(filepath.Ext(e.Name()), ".json") {
+			if match[strings.ToLower(filepath.Ext(e.Name()))] {
 				files = append(files, e.Name())
 			}
 		}
@@ -127,7 +194,7 @@ func (a *App) GetConfigFiles() []string {
 }
 
 // SelectConfigFile selects a config from the configs directory by filename.
-// (Replaces the native file dialog: the dropdown lists configs/*.json.)
+// 选择后把该文件复制到 run 目录（config.json / config.yaml），供内核启动使用。
 func (a *App) SelectConfigFile(name string) (string, error) {
 	return guardR("SelectConfigFile", func() (string, error) {
 		if a.cfgManager == nil {
@@ -138,7 +205,7 @@ func (a *App) SelectConfigFile(name string) (string, error) {
 			return "", fmt.Errorf("未指定配置文件")
 		}
 		// 安全检查: 只允许纯文件名, 禁止路径穿越
-		if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") || filepath.Base(name) != name {
+		if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") || filepath.Base(name) != name {
 			return "", fmt.Errorf("非法文件名: %s", name)
 		}
 		full := filepath.Join(getConfigsDir(), name)
@@ -146,13 +213,24 @@ func (a *App) SelectConfigFile(name string) (string, error) {
 			return "", fmt.Errorf("配置文件不存在: %s", name)
 		}
 
-		// ── 切换编排：停核心 → 换配置 → 重建节点/inbound/tun → 拉起核心 ──
 		s := a.cfgManager.Settings
+		core := s.Core
+		// 扩展名必须与当前内核匹配
+		ext := strings.ToLower(filepath.Ext(name))
+		if core == config.CoreMihomo {
+			if ext != ".yaml" && ext != ".yml" {
+				return "", fmt.Errorf("mihomo 内核需要 yaml 配置文件（.yaml/.yml），不支持: %s", name)
+			}
+		} else if ext != ".json" {
+			return "", fmt.Errorf("sing-box 内核需要 json 配置文件（.json），不支持: %s", name)
+		}
+
+		// ── 切换编排：停核心 → 换配置 → 重建节点/inbound/tun → 复制到 run → 拉起核心 ──
 		oldPath := s.ConfigPath
 		wasRunning := a.sbProcess.GetStatus().Running
 
 		// 切换前探测旧状态（tun 看旧配置文件；系统代理看注册表）
-		tunWasOn := oldPath != "" && config.HasTunInbound(oldPath)
+		tunWasOn := oldPath != "" && config.HasTunInbound(core, oldPath)
 		proxyWasOn := a.proxy.IsEnabled()
 
 		if wasRunning {
@@ -161,7 +239,8 @@ func (a *App) SelectConfigFile(name string) (string, error) {
 			}
 		}
 
-		s.ConfigPath = full
+		s.SetCoreConfigPath(core, full)
+		a.cfgManager.Settings = s
 		if err := a.cfgManager.Save(); err != nil {
 			return "", fmt.Errorf("保存设置失败: %v", err)
 		}
@@ -169,32 +248,37 @@ func (a *App) SelectConfigFile(name string) (string, error) {
 		// 重新应用节点（如果之前有应用过的节点）
 		if s.AppliedNodeID != "" {
 			if n := a.nodeStore.Get(s.AppliedNodeID); n != nil {
-				if err := config.ApplyNodeToConfig(full, *n); err != nil {
+				if err := config.ApplyNodeToConfig(core, full, *n); err != nil {
 					return "", fmt.Errorf("重新应用节点失败: %v", err)
 				}
 			}
 		}
 
-		// 系统代理开着则重建 mixed inbound 并重设注册表（端口可能已变）
+		// 系统代理开着则重建 mixed inbound / mixed-port 并重设注册表（端口可能已变）
 		if proxyWasOn {
-			if err := config.SetMixedInbound(full, true, s.ProxyListen, s.ProxyPort); err != nil {
-				return "", fmt.Errorf("重建系统代理 inbound 失败: %v", err)
+			if err := config.SetMixedInbound(core, full, true, s.ProxyListen, s.ProxyPort); err != nil {
+				return "", fmt.Errorf("重建系统代理配置失败: %v", err)
 			}
 			if err := a.proxy.Enable("127.0.0.1", s.ProxyPort); err != nil {
 				return "", fmt.Errorf("重设系统代理失败: %v", err)
 			}
 		}
 
-		// TUN 开着则重建 tun inbound
+		// TUN 开着则重建 TUN 配置
 		if tunWasOn {
-			if err := config.SetTun(full, true, s.TunStack, s.TunMTU, s.TunStrictRoute); err != nil {
+			if err := config.SetTun(core, full, true, s.TunStack, s.TunMTU, s.TunStrictRoute); err != nil {
 				return "", fmt.Errorf("重建 TUN 配置失败: %v", err)
 			}
 		}
 
+		// 复制到 run 目录（先清除旧配置，保证只有一个当前内核的配置文件）
+		if err := syncRunConfig(core, full); err != nil {
+			return "", fmt.Errorf("同步 run 配置失败: %v", err)
+		}
+
 		// 切换前核心在跑则重新拉起
 		if wasRunning {
-			if err := a.sbProcess.Start(getSingBoxBin(), full); err != nil {
+			if err := a.startCore(); err != nil {
 				return "", fmt.Errorf("配置已切换，但核心启动失败: %v（请手动启动核心）", err)
 			}
 		}
@@ -343,11 +427,14 @@ func (a *App) UpdateNode(n node.Node) error {
 	})
 }
 
-// ApplyNode: replace the "proxy" outbound in config file with this node
-// 若核心正在运行，则先停核心、改配置、再拉起（保证新节点即时生效）
+// ApplyNode: replace the "proxy" outbound (sing-box) or proxies entry (mihomo)
+// in config file with this node.
+// 若核心正在运行，则先停核心、改配置、同步 run 目录、再拉起（保证新节点即时生效）
 func (a *App) ApplyNode(id string) error {
 	return guardE("ApplyNode", func() error {
-		cfgPath := a.cfgManager.Settings.ConfigPath
+		s := a.cfgManager.Settings
+		core := s.Core
+		cfgPath := s.ConfigPath
 		if cfgPath == "" {
 			return fmt.Errorf("未选择配置文件")
 		}
@@ -361,7 +448,11 @@ func (a *App) ApplyNode(id string) error {
 				return fmt.Errorf("停止核心失败: %v", err)
 			}
 		}
-		if err := config.ApplyNodeToConfig(cfgPath, *n); err != nil {
+		if err := config.ApplyNodeToConfig(core, cfgPath, *n); err != nil {
+			return err
+		}
+		// 同步到 run 目录（先清除旧配置）
+		if err := syncRunConfig(core, cfgPath); err != nil {
 			return err
 		}
 		// 持久化应用的节点 ID（切换配置文件后据此重新应用）
@@ -370,7 +461,7 @@ func (a *App) ApplyNode(id string) error {
 			return fmt.Errorf("记录应用节点失败: %v", err)
 		}
 		if wasRunning {
-			if err := a.sbProcess.Start(getSingBoxBin(), cfgPath); err != nil {
+			if err := a.startCore(); err != nil {
 				return fmt.Errorf("节点已写入配置，但核心重启失败: %v（请手动启动核心）", err)
 			}
 		}
@@ -434,7 +525,12 @@ func (a *App) SaveSettings(s config.Settings) error {
 		if err := s.Validate(); err != nil {
 			return err
 		}
+		oldCore := a.cfgManager.Settings.Core
 		a.cfgManager.Settings = s
+		// 切换内核：选中路径切换为新内核各自记忆的配置文件（可能为空 = 尚未选择）
+		if oldCore != s.Core {
+			a.cfgManager.Settings.ConfigPath = a.cfgManager.Settings.ActiveConfigPath()
+		}
 		if err := a.cfgManager.Save(); err != nil {
 			return fmt.Errorf("保存设置失败: %v", err)
 		}
@@ -444,15 +540,16 @@ func (a *App) SaveSettings(s config.Settings) error {
 	})
 }
 
-// GetAppliedNodeID 找出配置文件中当前 "proxy" outbound 对应的节点 ID。
+// GetAppliedNodeID 找出配置文件中当前应用的节点 ID
+//（sing-box：tag "proxy" 的 outbound；mihomo：name "proxy" 的 proxies 条目）。
 // 无匹配（含未选配置/手工改配置）返回 ""。
 func (a *App) GetAppliedNodeID() string {
 	return guardP("GetAppliedNodeID", func() string {
-		cfgPath := a.cfgManager.Settings.ConfigPath
-		if cfgPath == "" {
+		s := a.cfgManager.Settings
+		if s.ConfigPath == "" {
 			return ""
 		}
-		return config.FindAppliedNodeID(cfgPath, a.nodeStore.GetAll())
+		return config.FindAppliedNodeID(s.Core, s.ConfigPath, a.nodeStore.GetAll())
 	})
 }
 
@@ -537,23 +634,27 @@ func (a *App) DeleteGroup(id string) error {
 
 func (a *App) EnableTun() error {
 	return guardE("EnableTun", func() error {
-		cfgPath := a.cfgManager.Settings.ConfigPath
+		s := a.cfgManager.Settings
+		core := s.Core
+		cfgPath := s.ConfigPath
 		if cfgPath == "" {
 			return fmt.Errorf("未选择配置文件")
 		}
-		s := a.cfgManager.Settings
-		// TUN 开关依赖核心状态：核心在跑则先停、改配置、再拉起，保证即时生效
+		// TUN 开关依赖核心状态：核心在跑则先停、改配置、同步 run、再拉起，保证即时生效
 		wasRunning := a.sbProcess.GetStatus().Running
 		if wasRunning {
 			if err := a.sbProcess.Stop(); err != nil {
 				return fmt.Errorf("停止核心失败: %v", err)
 			}
 		}
-		if err := config.SetTun(cfgPath, true, s.TunStack, s.TunMTU, s.TunStrictRoute); err != nil {
+		if err := config.SetTun(core, cfgPath, true, s.TunStack, s.TunMTU, s.TunStrictRoute); err != nil {
+			return err
+		}
+		if err := syncRunConfig(core, cfgPath); err != nil {
 			return err
 		}
 		if wasRunning {
-			if err := a.sbProcess.Start(getSingBoxBin(), cfgPath); err != nil {
+			if err := a.startCore(); err != nil {
 				return fmt.Errorf("TUN 已写入配置，但核心启动失败: %v（请手动启动核心）", err)
 			}
 		}
@@ -563,7 +664,9 @@ func (a *App) EnableTun() error {
 
 func (a *App) DisableTun() error {
 	return guardE("DisableTun", func() error {
-		cfgPath := a.cfgManager.Settings.ConfigPath
+		s := a.cfgManager.Settings
+		core := s.Core
+		cfgPath := s.ConfigPath
 		if cfgPath == "" {
 			return fmt.Errorf("未选择配置文件")
 		}
@@ -573,11 +676,14 @@ func (a *App) DisableTun() error {
 				return fmt.Errorf("停止核心失败: %v", err)
 			}
 		}
-		if err := config.SetTun(cfgPath, false, "", 0, false); err != nil {
+		if err := config.SetTun(core, cfgPath, false, "", 0, false); err != nil {
+			return err
+		}
+		if err := syncRunConfig(core, cfgPath); err != nil {
 			return err
 		}
 		if wasRunning {
-			if err := a.sbProcess.Start(getSingBoxBin(), cfgPath); err != nil {
+			if err := a.startCore(); err != nil {
 				return fmt.Errorf("TUN 已移除，但核心启动失败: %v（请手动启动核心）", err)
 			}
 		}
@@ -589,13 +695,29 @@ func (a *App) DisableTun() error {
 
 func (a *App) EnableSystemProxy() error {
 	return guardE("EnableSystemProxy", func() error {
-		cfgPath := a.cfgManager.Settings.ConfigPath
+		s := a.cfgManager.Settings
+		core := s.Core
+		cfgPath := s.ConfigPath
 		if cfgPath == "" {
 			return fmt.Errorf("未选择配置文件")
 		}
-		s := a.cfgManager.Settings
-		if err := config.SetMixedInbound(cfgPath, true, s.ProxyListen, s.ProxyPort); err != nil {
+		// 核心在跑则先停、改配置、同步 run、再拉起，保证 mixed inbound / mixed-port 即时生效
+		wasRunning := a.sbProcess.GetStatus().Running
+		if wasRunning {
+			if err := a.sbProcess.Stop(); err != nil {
+				return fmt.Errorf("停止核心失败: %v", err)
+			}
+		}
+		if err := config.SetMixedInbound(core, cfgPath, true, s.ProxyListen, s.ProxyPort); err != nil {
 			return err
+		}
+		if err := syncRunConfig(core, cfgPath); err != nil {
+			return err
+		}
+		if wasRunning {
+			if err := a.startCore(); err != nil {
+				return fmt.Errorf("系统代理已写入配置，但核心启动失败: %v（请手动启动核心）", err)
+			}
 		}
 		// Windows 系统代理地址固定为 127.0.0.1（监听地址可以是 0.0.0.0/::，但注册表里不能）
 		return a.proxy.Enable("127.0.0.1", s.ProxyPort)
@@ -608,16 +730,14 @@ func (a *App) DisableSystemProxy() error {
 	})
 }
 
-// ─── SingBox process APIs ─────────────────────────────────────────────────────
+// ─── Core process APIs ─────────────────────────────────────────────────────
 
+// StartSingBox 启动当前内核（sing-box 或 mihomo）。
+// 启动前把选中的配置文件同步到 run 目录（不存在则视为首次同步），
+// sing-box 使用 run -D run，mihomo 使用 -d run。
 func (a *App) StartSingBox() error {
 	return guardE("StartSingBox", func() error {
-		cfgPath := a.cfgManager.Settings.ConfigPath
-		if cfgPath == "" {
-			return fmt.Errorf("未选择配置文件")
-		}
-		binPath := getSingBoxBin()
-		return a.sbProcess.Start(binPath, cfgPath)
+		return a.startCore()
 	})
 }
 
@@ -639,12 +759,48 @@ func (a *App) GetSingBoxLog() []string {
 	})
 }
 
-func getSingBoxBin() string {
+// getCoreBin 返回指定内核的二进制路径（程序目录 bin/ 下）。
+func getCoreBin(core string) string {
+	name := "sing-box.exe"
+	if core == config.CoreMihomo {
+		name = "mihomo.exe"
+	}
 	exe, err := os.Executable()
 	if err != nil {
-		return "bin/sing-box.exe"
+		return filepath.Join("bin", name)
 	}
-	return filepath.Join(filepath.Dir(exe), "bin", "sing-box.exe")
+	return filepath.Join(filepath.Dir(exe), "bin", name)
+}
+
+// startCore 用 run 目录中的配置启动当前内核。
+// 启动前把选中的源配置重新同步到 run 目录（同时覆盖"run 配置不存在"的情况），
+// 源文件已包含应用的节点/TUN/系统代理设置。
+func (a *App) startCore() error {
+	s := a.cfgManager.Settings
+	core := s.Core
+	if s.ConfigPath == "" {
+		return fmt.Errorf("未选择配置文件")
+	}
+	binPath := getCoreBin(core)
+	if _, err := os.Stat(binPath); err != nil {
+		if core == config.CoreMihomo {
+			return fmt.Errorf("未找到 mihomo 内核: %s（请将 mihomo.exe 放入 bin 目录）", binPath)
+		}
+		return fmt.Errorf("未找到 sing-box 内核: %s（请将 sing-box.exe 放入 bin 目录）", binPath)
+	}
+	if err := syncRunConfig(core, s.ConfigPath); err != nil {
+		return err
+	}
+	ensureRunDir()
+	var args []string
+	if core == config.CoreMihomo {
+		// mihomo：-d 指定工作目录（配置与 geodata 所在地），-f 指定配置文件
+		args = []string{"-d", getRunDir(), "-f", runConfigPath(core)}
+	} else {
+		// sing-box：-D 指定工作目录，-c 指定配置文件
+		args = []string{"run", "-D", getRunDir(), "-c", runConfigPath(core)}
+	}
+	return a.sbProcess.Start(binPath, args, core)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -671,7 +827,8 @@ func (a *App) ShowMessage(title, msg string) {
 	})
 }
 
-// GetConfigPreview returns formatted JSON of current config for display
+// GetConfigPreview returns the current config content for display.
+// sing-box JSON 格式化输出；mihomo YAML 原样输出。
 func (a *App) GetConfigPreview() (string, error) {
 	return guardR("GetConfigPreview", func() (string, error) {
 		cfgPath := a.cfgManager.Settings.ConfigPath
@@ -681,6 +838,10 @@ func (a *App) GetConfigPreview() (string, error) {
 		data, err := os.ReadFile(cfgPath)
 		if err != nil {
 			return "", err
+		}
+		ext := strings.ToLower(filepath.Ext(cfgPath))
+		if ext == ".yaml" || ext == ".yml" {
+			return string(data), nil
 		}
 		var obj interface{}
 		if err := json.Unmarshal(data, &obj); err != nil {

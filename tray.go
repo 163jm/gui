@@ -33,7 +33,7 @@ func stopTray() {
 
 func onTrayReady() {
 	systray.SetIcon(trayIconBytes())
-	systray.SetTooltip("SingBox GUI")
+	systray.SetTooltip("SM GUI")
 
 	mShow := systray.AddMenuItem("显示主窗口", "打开主界面")
 	mShow.Click(func() {

@@ -429,6 +429,8 @@ func clashProxyToNode(p map[string]interface{}) (*Node, error) {
 	}
 
 	n := &Node{ID: newID(), Name: name, Address: server, Port: port}
+	// keep the original Clash proxies entry for lossless re-apply to mihomo configs
+	n.RawClashProxy = p
 
 	switch t {
 	case "vmess":
