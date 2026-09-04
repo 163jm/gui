@@ -39,7 +39,7 @@ jobs:
       - name: Download latest sing-box
         shell: pwsh
         run: |
-          $apiUrl = "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+          $apiUrl = "https://api.github.com/repos/163jm/singbox-slim/releases/latest"
           $headers = @{ "User-Agent" = "sm-gui-builder" }
           $release = Invoke-RestMethod -Uri $apiUrl -Headers $headers
           $tag = $release.tag_name
